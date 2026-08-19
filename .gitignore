@@ -1,0 +1,61 @@
+# Dependencies and local runtimes
+/node_modules/
+/.venv-ppocr/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Test and build output
+/coverage/
+
+# next.js
+/.next/
+/.vinext/
+/out/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+next-env.d.ts
+*.tsbuildinfo
+/dist/
+/.wrangler/
+/outputs/
+/work/
+/tools/cloudflared.exe
+
+# Private machine configuration. Commit only sanitized *.example.yml files.
+/config/*.yml
+!/config/*.example.yml
+/tools/quick-tunnel.yml
+
+# Runtime data may contain player names, scores, screenshots, and OCR output.
+/data/**
+!/data/.gitkeep
+
+# Local service logs
+/work-*.log
+/*.stdout.log
+/*.stderr.log
+
+# Python bytecode
+__pycache__/
+*.py[cod]
