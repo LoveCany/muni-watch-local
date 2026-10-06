@@ -1,5 +1,7 @@
-export const unityBridgeSource = String.raw`// The APK is checked by the controller before this build-specific runtime is loaded.
+export const unityBridgeSource = String.raw`// Runtime addresses and layouts are validated before managed calls.
 const config = __CONFIG__;
+const runtime = config.runtime;
+const layout = runtime.layout;
 const nil = ptr(0);
 let library = null;
 let nativeBridge = null;
@@ -19,23 +21,23 @@ const dispatcherSignature=Memory.allocUtf8String('JJ');
 const classCache = new Map();
 const main = Process.enumerateThreads().find(t => t.name === 'UnityMain');
 if (!main) throw new Error('UnityMain is not running');
-if (Process.pointerSize !== 8) throw new Error('Only the validated 64-bit layout is supported');
+if (Process.pointerSize !== runtime.pointerSize) throw new Error('Only the validated 64-bit layout is supported');
 
 if (Process.arch === 'x64') {
     const mapping = File.readAllText('/proc/self/maps').split('\n').find(
-        line => /\blibil2cpp\.so$/.test(line) && /r--p 00000000 /.test(line) && line.startsWith('4000'));
+        line => /\blibil2cpp\.so$/.test(line) && /r--p 00000000 /.test(line) && line.startsWith(runtime.nativeBridge.guestMapPrefix));
     if (!mapping) throw new Error('No MuMu ARM64 IL2CPP mapping');
     const base = ptr('0x' + mapping.split('-')[0]);
     guestBase = base;
-    const signature = Array.from(new Uint8Array(base.add(0x346bb98).readByteArray(8)),
+    const signature = Array.from(new Uint8Array(base.add(runtime.buildGuard.rva).readByteArray(8)),
         n => n.toString(16).padStart(2, '0')).join('');
-    if (signature !== 'fe0f1ef8f44f01a9') throw new Error('Unsupported IL2CPP build');
+    if (signature !== runtime.buildGuard.guard) throw new Error('Unsupported IL2CPP build');
     const itf = Process.getModuleByName('libhoudini.so').getExportByName('NativeBridgeItf');
-    if (itf.readU32() !== 7) throw new Error('The observed MuMu bridge is version 7');
-    const load = new NativeFunction(itf.add(112).readPointer(), 'pointer', ['pointer','int','pointer']);
+    if (itf.readU32() !== runtime.nativeBridge.version) throw new Error('Unsupported MuMu native bridge version');
+    const load = new NativeFunction(itf.add(runtime.nativeBridge.loadLibrary).readPointer(), 'pointer', ['pointer','int','pointer']);
     library = load(Memory.allocUtf8String(mapping.slice(mapping.indexOf('/data/'))), 2, nil);
     if (library.isNull()) throw new Error('The existing IL2CPP library is unavailable to the bridge');
-    nativeBridge = new NativeFunction(itf.add(144).readPointer(), 'pointer',
+    nativeBridge = new NativeFunction(itf.add(runtime.nativeBridge.getTrampoline).readPointer(), 'pointer',
         ['pointer','pointer','pointer','uint32','int']);
     helperHandle = load(Memory.allocUtf8String(config.helperPath), 2, nil);
     if(helperHandle.isNull()) throw new Error('The main-thread callback helper did not load');
@@ -55,14 +57,20 @@ if (Process.arch === 'x64') {
     helperHandle=dlopen(Memory.allocUtf8String(config.helperPath),2);
 }
 
+function guardedApiAddress(name) {
+    const metadata=runtime.api[name];
+    if(!metadata) throw new Error('Missing guarded API: '+name);
+    const address=guestBase.add(metadata.rva);
+    const bytes=Array.from(new Uint8Array(address.readByteArray(8)),n=>n.toString(16).padStart(2,'0')).join('');
+    if(bytes!==metadata.guard) throw new Error('IL2CPP API guard failed: '+name);
+    return address;
+}
+// Validate every native target before allocating objects or posting a managed callback.
+for(const name of Object.keys(runtime.api)) guardedApiAddress(name);
 function api(name, result, arguments_, shorty) {
     if (!functions.has(name)) {
         if(dispatcher) {
-            const metadata=config.api[name];
-            if(!metadata) throw new Error('Missing guarded API: '+name);
-            const address=guestBase.add(metadata.rva);
-            const guard=Array.from(new Uint8Array(address.readByteArray(8)),n=>n.toString(16).padStart(2,'0')).join('');
-            if(guard!==metadata.guard) throw new Error('IL2CPP API guard failed: '+name);
+            const address=guardedApiAddress(name);
             functions.set(name,{address,call:(...values)=>{
                 const frame=Memory.alloc(48);
                 frame.writePointer(address);
@@ -73,14 +81,9 @@ function api(name, result, arguments_, shorty) {
             }});
             return functions.get(name).call;
         }
-        const symbolName=Memory.allocUtf8String(name);
-        const signature=Memory.allocUtf8String(shorty);
-        const address = nativeBridge
-            ? nativeBridge(library, symbolName, signature, shorty.length, 2)
-            : Process.getModuleByName('libil2cpp.so').getExportByName(name);
-        if (address.isNull()) throw new Error('Missing IL2CPP API: ' + name);
+        const address=guardedApiAddress(name);
         // Houdini enters its guest through a signal. Frida must let Houdini handle that signal.
-        functions.set(name, {symbolName,signature,address,
+        functions.set(name, {address,
             call:new NativeFunction(address,result,arguments_,{exceptions:'propagate'})});
     }
     return functions.get(name).call;
@@ -88,12 +91,12 @@ function api(name, result, arguments_, shorty) {
 function attachJavaThread() {
     if (!javaVM) return;
     const env = Memory.alloc(8);
-    const getEnv = new NativeFunction(javaVM.readPointer().add(48).readPointer(),
+    const getEnv = new NativeFunction(javaVM.readPointer().add(runtime.javaVM.getEnv).readPointer(),
         'int', ['pointer','pointer','int']);
-    const status=getEnv(javaVM,env,0x10006);
+    const status=getEnv(javaVM,env,runtime.javaVM.jniVersion);
     if(status===0) {jniEnv=env.readPointer();return;}
     if(status!==-2) throw new Error('Cannot query the current JNI thread');
-    const attach = new NativeFunction(javaVM.readPointer().add(32).readPointer(),
+    const attach = new NativeFunction(javaVM.readPointer().add(runtime.javaVM.attachCurrentThread).readPointer(),
         'int', ['pointer','pointer','pointer']);
     if (attach(javaVM, env, nil) !== 0) throw new Error('Cannot use the bridge without an attached JNI thread');
     jniEnv=env.readPointer();
@@ -101,7 +104,7 @@ function attachJavaThread() {
 }
 function detachJavaThread() {
     if(!jniOwned) return;
-    const detach=new NativeFunction(javaVM.readPointer().add(40).readPointer(),'int',['pointer']);
+    const detach=new NativeFunction(javaVM.readPointer().add(runtime.javaVM.detachCurrentThread).readPointer(),'int',['pointer']);
     if(detach(javaVM)!==0) throw new Error('Cannot release owned JNI thread');
     jniOwned=false;jniEnv=nil;
 }
@@ -149,22 +152,22 @@ function invoke(owner,name,instance=nil,args=[]) {
     send({stage:'invoke_state_created',method:name});
     hold(state);
     send({stage:'invoke_state_rooted',method:name});
-    const data=state.add(32);
+    const data=state.add(layout.array.data);
     const parameterOwner=args.length ? managedBytes(args.length*8) : nil;
     send({stage:'invoke_parameters_created',method:name});
-    const parameters=parameterOwner.isNull() ? nil : parameterOwner.add(32);
+    const parameters=parameterOwner.isNull() ? nil : parameterOwner.add(layout.array.data);
     args.forEach((argument,i)=>parameters.add(i*8).writePointer(argument));
-    data.writePointer(guestBase.add(53351792));
+    data.writePointer(guardedApiAddress('il2cpp_runtime_invoke'));
     const nameBytes=Array.from(name,c=>c.charCodeAt(0)).concat(0);
-    const methodName=managedBytes(nameBytes.length).add(32);
+    const methodName=managedBytes(nameBytes.length).add(layout.array.data);
     methodName.writeByteArray(nameBytes);
-    data.add(64).writePointer(guestBase.add(config.api.il2cpp_class_get_method_from_name.rva));
+    data.add(64).writePointer(guardedApiAddress('il2cpp_class_get_method_from_name'));
     data.add(72).writePointer(owner);
     data.add(80).writePointer(methodName);
     data.add(88).writeU32(args.length);
     data.add(16).writePointer(instance);
     data.add(24).writePointer(parameters);
-    data.add(48).writePointer(guestBase.add(53351364));
+    data.add(48).writePointer(guardedApiAddress('il2cpp_gchandle_new'));
     pendingCall={state,parameterOwner,args,parameters,name};
     send({stage:'invoke_post',method:name});
     invokeRaw(objectClass(queueContext),'Post',queueContext,[queueDelegate,state]);
@@ -215,16 +218,16 @@ function prepareQueue() {
     send({stage:'queue_resolve_callback'});
     const mapping=File.readAllText('/proc/self/maps').split('\n').find(
         line=>line.endsWith(config.helperPath) && /r--p 00000000 /.test(line) &&
-              (Process.arch!=='x64' || line.startsWith('4000')));
+              (Process.arch!=='x64' || line.startsWith(runtime.nativeBridge.guestMapPrefix)));
     if(!mapping) throw new Error('Cannot identify the guest queue callback mapping');
     const helper=ptr('0x'+mapping.split('-')[0]).add(0x1000);
     const template=method(klass('System','GC'),'KeepAlive',1);
-    if(template.add(82).readU8()!==1 || !(template.add(76).readU16() & 0x10))
+    if(template.add(layout.methodInfo.parameterCount).readU8()!==1 || !(template.add(layout.methodInfo.flags).readU16() & layout.methodInfo.staticMask))
         throw new Error('Unexpected callback method metadata layout');
-    callbackMethod=managedBytes(88).add(32);
-    callbackMethod.writeByteArray(template.readByteArray(88));
-    callbackMethod.writePointer(helper);
-    callbackMethod.add(8).writePointer(helper);
+    callbackMethod=managedBytes(layout.methodInfo.size).add(layout.array.data);
+    callbackMethod.writeByteArray(template.readByteArray(layout.methodInfo.size));
+    callbackMethod.add(layout.methodInfo.methodPointer).writePointer(helper);
+    callbackMethod.add(layout.methodInfo.virtualMethodPointer).writePointer(helper);
     const callbackClass=klass('System.Threading','SendOrPostCallback');
     send({stage:'queue_allocate_delegate'});
     queueDelegate=api('il2cpp_object_new','pointer',['pointer'],'JJ')(callbackClass);
@@ -240,15 +243,15 @@ function string(value) {
     const result=api('il2cpp_string_new','pointer',['pointer'],'JJ')(Memory.allocUtf8String(value));
     hold(result);return result;
 }
-function boolean(value) {const p=managedBytes(1).add(32);p.writeU8(value ? 1 : 0);return p;}
+function boolean(value) {const p=managedBytes(1).add(layout.array.data);p.writeU8(value ? 1 : 0);return p;}
 
 
 
 function arrayItems(array) {
     if (array.isNull()) return [];
-    const count=Number(array.add(0x18).readU64());
+    const count=Number(array.add(layout.array.length).readU64());
     if (count<0 || count>100000) throw new Error('Invalid managed array');
-    return Array.from({length:count},(_,i)=>array.add(0x20+i*8).readPointer());
+    return Array.from({length:count},(_,i)=>array.add(layout.array.data+i*runtime.pointerSize).readPointer());
 }
 
 function type(owner) {
@@ -263,17 +266,17 @@ export const rankingReaderSource = String.raw`
 let rootCount = 0;
 function managedString(value) {
     if(value.isNull()) throw new Error('Missing ranking nickname');
-    const length=value.add(16).readS32();
+    const length=value.add(layout.string.length).readS32();
     if(length<1 || length>256) throw new Error('Invalid ranking nickname length');
-    return value.add(20).readUtf16String(length);
+    return value.add(layout.string.data).readUtf16String(length);
 }
 function active(object) {
     const value=invoke(objectClass(object),'get_isActiveAndEnabled',object);
-    return !value.isNull() && value.add(16).readU8()!==0;
+    return !value.isNull() && value.add(layout.boxedValue).readU8()!==0;
 }
 function fieldValue(object, name) {
     const reflectionType=type(objectClass(object));
-    const flags=managedBytes(4).add(32);flags.writeS32(52);
+    const flags=managedBytes(4).add(layout.array.data);flags.writeS32(52);
     const field=invoke(objectClass(reflectionType),'GetField',reflectionType,[string(name),flags]);
     if(field.isNull()) throw new Error('Missing ranking field: '+name);
     return invoke(objectClass(field),'GetValue',field,[object]);
@@ -284,18 +287,18 @@ function readRows(array) {
     return objects.map(row=>{
         if(row.isNull() || !objectClass(row).equals(klass('','EventRankingData')))
             throw new Error('Unexpected ranking row class');
-        const rank=row.add(0x18).readS32(), score=row.add(0x40).readS32();
-        const profile=row.add(0x20).readPointer();
+        const rank=row.add(layout.fields.rankingDataRank).readS32(), score=row.add(layout.fields.rankingDataPt).readS32();
+        const profile=row.add(layout.fields.rankingDataProfile).readPointer();
         if(profile.isNull() || !objectClass(profile).equals(klass('Shared.Objects','UserProfile')))
             throw new Error('Unexpected ranking profile class');
         // Read only the public nickname; account IDs and other profile fields stay untouched.
-        return {rank,score,name:managedString(profile.add(0x20).readPointer())};
+        return {rank,score,name:managedString(profile.add(layout.fields.userProfileNickname).readPointer())};
     }).sort((a,b)=>a.rank-b.rank);
 }
 function releaseTemporary() {
     if(pendingRelease) throw new Error('A handle release batch remains unresolved');
     if(pendingCall) {
-        const data=pendingCall.state.add(32);
+        const data=pendingCall.state.add(layout.array.data);
         if(data.add(96).readU32()===0) return false;
         const handle=data.add(56).readPointer();if(!handle.isNull())handles.push(handle);
         pendingCall=null;
@@ -326,22 +329,22 @@ function readRanking() {
             [type(klass('','EventRankingInfoCarouselCellView'))]));
         const live=views.filter(active);
         if(live.length!==1) throw new Error('Exactly one active event ranking view is required');
-        const manager=live[0].add(0x50).readPointer();
+        const manager=live[0].add(layout.fields.rankingViewListManager).readPointer();
         if(manager.isNull() || !active(manager)) throw new Error('The ranking list is inactive');
         const array=fieldValue(manager,'_dataList');
         if(array.isNull()) throw new Error('The ranking list has not loaded');
         const presenters=arrayItems(invoke(klass('UnityEngine','Resources'),'FindObjectsOfTypeAll',nil,
             [type(klass('','EventRankingPresenter'))])).filter(active);
         if(presenters.length!==1) throw new Error('Exactly one active event ranking presenter is required');
-        const presenter=presenters[0], master=presenter.add(0x60).readPointer();
-        const cell=presenter.add(0xB0).readPointer();
+        const presenter=presenters[0], master=presenter.add(layout.fields.rankingPresenterMaster).readPointer();
+        const cell=presenter.add(layout.fields.rankingPresenterCurrentCell).readPointer();
         if(cell.isNull() || !objectClass(cell).equals(klass('','EventRankingInfoCarouselCellData')))
             throw new Error('Missing current ranking identity');
-        const rankingName=managedString(cell.add(0x10).readPointer());
+        const rankingName=managedString(cell.add(layout.fields.rankingCellName).readPointer());
         if(rankingName!=='累計Ptランキング') throw new Error('The active board is not the cumulative Pt leaderboard');
         if(master.isNull() || !objectClass(master).equals(klass('','EventMaster')))
             throw new Error('Unexpected current event master');
-        const eventId=master.add(0x10).readS32();
+        const eventId=master.add(layout.fields.eventMasterId).readS32();
         if(eventId<=0) throw new Error('Invalid current event ID');
         const first=readRows(array), second=readRows(array);
         if(JSON.stringify(first)!==JSON.stringify(second)) throw new Error('Ranking changed during capture');
@@ -349,7 +352,7 @@ function readRanking() {
             (i>0 && entry.score>second[i-1].score))) throw new Error('Invalid TOP20 ranks or scores');
         if(!active(live[0]) || !fieldValue(manager,'_dataList').equals(array))
             throw new Error('The active leaderboard changed during capture');
-        if(!active(presenter) || !presenter.add(0x60).readPointer().equals(master))
+        if(!active(presenter) || !presenter.add(layout.fields.rankingPresenterMaster).readPointer().equals(master))
             throw new Error('The current event changed during capture');
         return {capturedAt:new Date().toISOString(),entries:second,eventId,rankingName};
     } finally {

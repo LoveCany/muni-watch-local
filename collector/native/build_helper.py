@@ -1,10 +1,16 @@
 """Build the AArch64 JNI dispatcher and Unity main-thread callback with Keystone 0.9.2."""
 from pathlib import Path
+import json
 import struct
 from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN
 
 root = Path(__file__).resolve().parent
+profile = json.loads((root.parent.parent/'config'/'il2cpp-runtime.json').read_text(encoding='utf-8'))
+array_data = profile['layout']['array']['data']
+if type(array_data) is not int or not 0 <= array_data <= 4095 or array_data % 8:
+    raise ValueError('Invalid managed array data offset')
 source = (root/'unity_main_invoke.S').read_text(encoding='utf-8')
+source = source.replace('MANAGED_ARRAY_DATA_OFFSET', str(array_data))
 code = bytes(Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN).asm(source)[0])
 call_code=bytes(Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN).asm((root/'jni_dispatch.S').read_text(encoding='utf-8'))[0])
 data = bytearray(0x1200 + len(call_code))
@@ -26,6 +32,7 @@ data[0x280+48:0x280+72] = struct.pack('<IBBHQQ',dispatch_offset,0x12,0,5,0x1200,
 data[0x300:0x318] = struct.pack('<6I',1,3,1,0,2,0)
 for i, entry in enumerate(dynamic):
     data[0x400+i*16:0x410+i*16] = struct.pack('<QQ',*entry)
+data[0x500:0x50c] = b'MWABI001' + struct.pack('<I', array_data)
 section_names=b'\0.dynstr\0.dynsym\0.hash\0.dynamic\0.text\0.shstrtab\0'
 data[0x600:0x600+len(section_names)]=section_names
 sections=[(0,0,0,0,0,0,0,0,0,0),

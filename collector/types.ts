@@ -51,3 +51,35 @@ export type RecognizedEntry = {
 export type OcrEngineInfo = { engine: string; model: string; device: string; gpu: string };
 export type RecognitionResult = { entries: RecognizedEntry[]; engine: OcrEngineInfo };
 export type OcrRow = { rank: number; name: Rectangle; score: Rectangle };
+
+export type RuntimeApiName =
+  | "il2cpp_gchandle_new"
+  | "il2cpp_object_get_class"
+  | "il2cpp_thread_attach"
+  | "il2cpp_class_from_name"
+  | "il2cpp_runtime_invoke"
+  | "il2cpp_domain_get_assemblies"
+  | "il2cpp_domain_get"
+  | "il2cpp_thread_detach"
+  | "il2cpp_string_new"
+  | "il2cpp_array_new"
+  | "il2cpp_assembly_get_image"
+  | "il2cpp_class_get_method_from_name"
+  | "il2cpp_object_new"
+  | "il2cpp_class_get_type"
+  | "il2cpp_gchandle_free"
+  | "il2cpp_type_get_object";
+type Guard = { rva: number; guard: string };
+export type RuntimeProfile = {
+  schemaVersion: 1; label: string; pointerSize: 8; buildGuard: Guard;
+  nativeBridge: { version: number; loadLibrary: number; getTrampoline: number; guestMapPrefix: string };
+  javaVM: { getEnv: number; attachCurrentThread: number; detachCurrentThread: number; jniVersion: number };
+  api: Record<RuntimeApiName, Guard>;
+  layout: {
+    array: { length: number; data: number }; string: { length: number; data: number }; boxedValue: number;
+    methodInfo: { size: number; methodPointer: number; virtualMethodPointer: number; parameterCount: number; flags: number; staticMask: number };
+    fields: { rankingViewListManager: number; rankingPresenterMaster: number; rankingPresenterCurrentCell: number;
+      rankingCellName: number; eventMasterId: number; rankingDataRank: number; rankingDataProfile: number;
+      rankingDataPt: number; userProfileNickname: number };
+  };
+};

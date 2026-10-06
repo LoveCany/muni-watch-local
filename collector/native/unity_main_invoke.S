@@ -1,7 +1,7 @@
 stp x29, x30, [sp, #-32]!
 stp x19, x20, [sp, #16]
 mov x29, sp
-add x19, x0, #32
+add x19, x0, #MANAGED_ARRAY_DATA_OFFSET
 ldr x1, [x19, #8]
 cbnz x1, invoke
 ldr x16, [x19, #64]

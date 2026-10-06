@@ -78,7 +78,7 @@ On every interval the collector:
 
 ## Default IL2CPP capture
 
-The example configuration uses `captureMode: il2cpp` and `maxEntries: 20`; an omitted `captureMode` also defaults to IL2CPP. The retained `ocr` settings and `nameCorrections` apply only to explicit OCR mode. The reader targets the validated D4DJ 10.8.0 APK on a rooted 64-bit MuMu instance with an already running Frida 17.20.0 server. It checks the APK digest and IL2CPP API bytes before attaching; game updates require a new validated layout. It does not start or restart services.
+The example configuration uses `captureMode: il2cpp` and `maxEntries: 20`; an omitted `captureMode` also defaults to IL2CPP. The retained `ocr` settings and `nameCorrections` apply only to explicit OCR mode. The reader targets the validated D4DJ 10.8.0 APK on a rooted 64-bit MuMu instance with an already running Frida 17.20.0 server. It validates IL2CPP instruction bytes before managed calls instead of requiring an exact APK SHA256. Game updates require the addresses and layouts in `config/il2cpp-runtime.json` to be checked against the new binary and metadata. It does not start or restart services.
 
 The reader follows the active event ranking view and reads only rank, nickname and integer Pt from its `EventRankingData[]`. It validates a complete descending TOP20 twice and rejects a screen/list change during capture. The existing leave/re-enter/TOP20 refresh sequence, minute interval, score continuity checks and local history remain in use. Tap coordinates still need to match the actual emulator layout. OCR configuration is retained for explicit legacy mode; direct mode does not start PaddleOCR or silently fall back to it.
 
@@ -93,6 +93,21 @@ The probe accepts `--adb` and `--serial` overrides without rewriting configurati
 Live validation passed two complete ADB-refreshed 20-row snapshots about 66 seconds apart, followed by handle cleanup and session detachment. The integrated collector also passed three automatic captures in the current activity database, with 60 ranking rows and complete ranks 1–20 in each capture. Long-running soak testing, exit-time disk failures and other game builds remain unverified.
 
 Each activity uses a new database at `data/events/<event-id>.sqlite`. The total Pt board uses its own `total_pt_captures` and `total_pt_ranking_entries` tables; future boards can use separate table prefixes within that activity database. Native collector state lives in `data/il2cpp-state.json`. Existing OCR history databases and state files are not opened or migrated by native mode. Same-player continuity applies within the current activity, so an earlier activity cannot reject a new activity's lower initial Pt. The event ID is internal routing metadata; probe exports contain only timestamps, ranks, nicknames and Pt. Reading and exporting additional boards is deferred until a live multi-board event provides evidence for that contract.
+
+## Updating the IL2CPP runtime profile
+
+All game-specific native addresses and memory offsets are owned by `config/il2cpp-runtime.json`. The `label` identifies the analyzed build for maintainers; it does not gate a game version. Offsets and RVAs are non-negative decimal byte values, and instruction guards are eight bytes written as 16 lowercase hexadecimal characters.
+
+- `api`: IL2CPP API RVAs and instruction guards, including the APIs used inside the native main-thread callback. There are no duplicate callback API addresses in JavaScript.
+- `buildGuard`: the existing binary-layout signature used on the MuMu guest mapping.
+- `layout`: managed array/string headers, boxed values, `MethodInfo`, and the ranking/event/profile field offsets.
+- `nativeBridge` and `javaVM`: the observed emulator bridge and JNI interface offsets. Recheck these if the emulator runtime changes.
+
+After a game update, compare the matching Il2CppDumper output (`dump.cs`, `script.json`, and `il2cpp.h`) and the native binary against this profile, update the affected values, then run `npm run typecheck` and `npm test`. Dump output alone does not prove the native API calling convention or GC-handle representation. The helper still supports the observed 64-bit pointer GC handles and its fixed task payload; a change to that ABI needs a source change rather than an offset edit.
+
+If `layout.array.data` changes, rebuild `unity_invoke.so` with `uv run --cache-dir .npm-cache/uv --no-project --with keystone-engine==0.9.2 python collector/native/build_helper.py`. Its assembly reads this header offset from the same profile. The client checks the embedded helper layout marker before attaching and rejects a stale helper. Other profile-only address/field changes do not require rebuilding the helper.
+
+An invalid profile fails before attachment. Every configured native API target is checked on script load, and the main-thread callback targets are checked again when posted. The helper's SHA256 still verifies its upload; only the whole-APK SHA256 restriction has been removed. Restart the collector through its normal clean shutdown before loading a changed profile, then validate one complete capture, cleanup, and two refreshed captures. A new game build remains unverified until those live checks pass.
 
 ## Temporary public sharing
 

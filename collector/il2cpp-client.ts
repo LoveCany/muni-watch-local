@@ -4,12 +4,11 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type * as frida from "frida";
-import { unityBridgeSource, rankingReaderSource } from "./il2cpp-agent.ts";
+import { createRuntimeAgentSource } from "./runtime-profile.ts";
 import type { MuniConfig, RuntimeRankingResult } from "./types.ts";
 import { acquireRuntimeOwner } from "./runtime-owner.ts";
 
 const execute = promisify(execFile);
-const APK_SHA = "d36f1309f8cc0cc3930823181157d5ec85cbb645c1d7592a2bd043fd8e681a17";
 export function validateRuntimeRanking(value: unknown): RuntimeRankingResult {
   if (!value || typeof value !== "object") throw new Error("Invalid IL2CPP ranking response");
   const result = value as Record<string, unknown>;
@@ -68,23 +67,20 @@ export function createIl2CppClient(root: string, config: Pick<MuniConfig, "adbPa
     if (releaseOwner) { await releaseOwner(); releaseOwner = null; }
   }
   async function attach(pid: number) {
+    const profile: unknown = JSON.parse(await readFile(path.join(root, "config", "il2cpp-runtime.json"), "utf8"));
+    const helper = path.join(root, "collector", "native", "unity_invoke.so");
+    const helperBytes = await readFile(helper);
+    const digest = createHash("sha256").update(helperBytes).digest("hex");
+    const helperPath = `/data/local/tmp/muni-unity-invoke-${digest}.so`;
+    const source = createRuntimeAgentSource(profile, helperPath, helperBytes);
     releaseOwner = await acquireRuntimeOwner(path.join(root, "data"), pid);
     const frida = runtime = await import("frida");
     progress("verify_runtime");
-    const packagePaths = await adb("shell", "pm", "path", "com.bushiroad.d4dj");
-    const apk = packagePaths.split(/\r?\n/).find((line) => line.endsWith("/base.apk"))?.replace(/^package:/, "");
-    if (!apk || !/^\/data\/app\/[A-Za-z0-9_~+=./-]+\/base\.apk$/.test(apk) ||
-        (await adb("shell", "sha256sum", apk)).split(/\s/)[0] !== APK_SHA) throw new Error("Unsupported game APK for IL2CPP ranking capture");
     const server = await adb("shell", "pidof", "frida-server");
     if (!/^\d+$/.test(server) || await adb("shell", "su", "-c", `'/proc/${server}/exe --version'`) !== "17.20.0")
       throw new Error("Start the matching Frida 17.20.0 server on the rooted emulator first");
-    const helper = path.join(root, "collector", "native", "unity_invoke.so");
-    const digest = createHash("sha256").update(await readFile(helper)).digest("hex");
-    const helperPath = `/data/local/tmp/muni-unity-invoke-${digest}.so`;
     await adb("push", helper, helperPath); await adb("shell", "chmod", "644", helperPath);
     if ((await adb("shell", "sha256sum", helperPath)).split(/\s/)[0] !== digest) throw new Error("IL2CPP helper upload verification failed");
-    const api: unknown = JSON.parse(await readFile(path.join(root, "collector", "native", "runtime_api.json"), "utf8"));
-    const source = unityBridgeSource.replace("__CONFIG__", JSON.stringify({ helperPath, api })) + rankingReaderSource;
     const device = await frida.getDevice(config.serial, { timeout: 10000 });
     progress("attach");
     session = await deadline((cancel) => device.attach(pid, {}, cancel));

@@ -5,7 +5,7 @@ This AArch64 ELF contains the regular JNI dispatcher and a UnitySynchronizationC
 - `jni_dispatch.S` exports `D4DJJniDispatch` at ELF offset `0x1200`. It forwards a frame's function pointer and up to four integer/pointer arguments through the regular JNI bridge.
 - `unity_main_invoke.S` exports `D4DJUnityMainInvoke` at ELF offset `0x1000`. The reader installs this address as a `SendOrPostCallback` and posts managed invocations to Unity's main thread; the callback stores the result, GC handle, exception and completion status.
 
-`build_helper.py` assembles both sources into `unity_invoke.so`. The runtime resolves the dispatcher by its export name and the main-thread callback by its fixed ELF offset. Renaming these sources does not change their calling convention or task-state layout.
+`build_helper.py` assembles both sources into `unity_invoke.so`. The runtime resolves the dispatcher by its export name and the main-thread callback by its fixed ELF offset. The managed array header offset comes from `config/il2cpp-runtime.json`; `MANAGED_ARRAY_DATA_OFFSET` in the assembly is substituted by the builder. ELF offset `0x500` contains the `MWABI001` marker followed by that offset as a little-endian uint32. The client rejects a helper built for a different header offset. Task payload offsets remain the helper ABI, not game-version settings.
 
 Rebuild from this directory's assembly using the pinned assembler:
 
