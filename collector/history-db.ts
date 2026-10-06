@@ -24,15 +24,22 @@ function downsampleCaptures(captures: Capture[], maxPoints: number): Capture[] {
   return sampled;
 }
 
-export function createHistoryDatabase(filename: string) {
+export function createHistoryDatabase(filename: string, { tablePrefix = "", maxEntries = 7 }: { tablePrefix?: string; maxEntries?: 7 | 20 } = {}) {
+  if (maxEntries !== 7 && maxEntries !== 20) throw new Error("Invalid history entry limit");
+  if (tablePrefix && !/^[a-z][a-z0-9_]{0,63}_$/.test(tablePrefix)) throw new Error("Invalid history table prefix");
+  function scopedSql(source: string) {
+    return source.replace(/\b(captures|ranking_entries(?:_v2)?|idx_captures_captured_at_ms)\b/g, name => tablePrefix + name);
+  }
   const database = new DatabaseSync(filename);
-  database.exec("PRAGMA foreign_keys = ON");
-  database.exec("PRAGMA journal_mode = WAL");
-  database.exec(`CREATE TABLE IF NOT EXISTS captures (id TEXT PRIMARY KEY, captured_at TEXT NOT NULL, captured_at_ms INTEGER NOT NULL)`);
-  database.exec(`
+  const executeSql = (source: string) => database.exec(scopedSql(source));
+  const prepareSql = (source: string) => database.prepare(scopedSql(source));
+  executeSql("PRAGMA foreign_keys = ON");
+  executeSql("PRAGMA journal_mode = WAL");
+  executeSql(`CREATE TABLE IF NOT EXISTS captures (id TEXT PRIMARY KEY, captured_at TEXT NOT NULL, captured_at_ms INTEGER NOT NULL)`);
+  executeSql(`
     CREATE TABLE IF NOT EXISTS ranking_entries (
       capture_id TEXT NOT NULL,
-      rank INTEGER NOT NULL CHECK (rank BETWEEN 1 AND 7),
+      rank INTEGER NOT NULL CHECK (rank BETWEEN 1 AND ${maxEntries}),
       name TEXT NOT NULL,
       score INTEGER NOT NULL CHECK (score >= 0),
       confidence REAL,
@@ -40,16 +47,16 @@ export function createHistoryDatabase(filename: string) {
       FOREIGN KEY (capture_id) REFERENCES captures(id) ON DELETE CASCADE
     )
   `);
-  const schemaRow = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ranking_entries'").get();
+  const schemaRow = prepareSql("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ranking_entries'").get();
   const rankingSchema = typeof schemaRow?.sql === "string" ? schemaRow.sql : "";
-  if (/BETWEEN\s+1\s+AND\s+3/i.test(rankingSchema)) {
-    database.exec("PRAGMA foreign_keys = OFF");
-    database.exec("BEGIN IMMEDIATE");
+  if (/BETWEEN\s+1\s+AND\s+3\b/i.test(rankingSchema)) {
+    executeSql("PRAGMA foreign_keys = OFF");
+    executeSql("BEGIN IMMEDIATE");
     try {
-      database.exec(`
+      executeSql(`
         CREATE TABLE ranking_entries_v2 (
           capture_id TEXT NOT NULL,
-          rank INTEGER NOT NULL CHECK (rank BETWEEN 1 AND 7),
+          rank INTEGER NOT NULL CHECK (rank BETWEEN 1 AND ${maxEntries}),
           name TEXT NOT NULL,
           score INTEGER NOT NULL CHECK (score >= 0),
           confidence REAL,
@@ -60,33 +67,33 @@ export function createHistoryDatabase(filename: string) {
         DROP TABLE ranking_entries;
         ALTER TABLE ranking_entries_v2 RENAME TO ranking_entries;
       `);
-      database.exec("COMMIT");
+      executeSql("COMMIT");
     } catch (error) {
-      database.exec("ROLLBACK");
+      executeSql("ROLLBACK");
       throw error;
     } finally {
-      database.exec("PRAGMA foreign_keys = ON");
+      executeSql("PRAGMA foreign_keys = ON");
     }
   }
-  database.exec("CREATE INDEX IF NOT EXISTS idx_captures_captured_at_ms ON captures(captured_at_ms)");
-  database.exec("PRAGMA optimize");
+  executeSql("CREATE INDEX IF NOT EXISTS idx_captures_captured_at_ms ON captures(captured_at_ms)");
+  executeSql("PRAGMA optimize");
 
-  const insertCapture = database.prepare("INSERT OR IGNORE INTO captures (id, captured_at, captured_at_ms) VALUES (?, ?, ?)");
-  const insertEntry = database.prepare("INSERT OR REPLACE INTO ranking_entries (capture_id, rank, name, score, confidence) VALUES (?, ?, ?, ?, ?)");
-  const selectHistory = database.prepare(`
+  const insertCapture = prepareSql("INSERT OR IGNORE INTO captures (id, captured_at, captured_at_ms) VALUES (?, ?, ?)");
+  const insertEntry = prepareSql("INSERT OR REPLACE INTO ranking_entries (capture_id, rank, name, score, confidence) VALUES (?, ?, ?, ?, ?)");
+  const selectHistory = prepareSql(`
     SELECT c.id, c.captured_at, e.rank, e.name, e.score, e.confidence
     FROM captures c JOIN ranking_entries e ON e.capture_id = c.id
     WHERE c.captured_at_ms >= ? ORDER BY c.captured_at_ms ASC, e.rank ASC
   `);
 
   function insert(capture: Capture): void {
-    database.exec("BEGIN IMMEDIATE");
+    executeSql("BEGIN IMMEDIATE");
     try {
       insertCapture.run(capture.id, capture.capturedAt, new Date(capture.capturedAt).getTime());
       for (const entry of capture.entries) insertEntry.run(capture.id, entry.rank, entry.name, entry.score, entry.confidence ?? null);
-      database.exec("COMMIT");
+      executeSql("COMMIT");
     } catch (error) {
-      database.exec("ROLLBACK");
+      executeSql("ROLLBACK");
       throw error;
     }
   }

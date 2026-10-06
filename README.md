@@ -2,15 +2,15 @@
 
 Muni Watch Local is a local leaderboard monitor for **D4DJ Groovy Mix**. It is inspired by [muni-web](https://hamzaabamboo.github.io/muni-web/), but it does not intercept or decrypt game traffic.
 
-Instead, the collector controls a MuMu Player instance through ADB, opens `ランキング` → `TOP20`, captures the emulator screen, and uses GPU-accelerated PaddleOCR to read the leading players and their total scores.
+By default, the collector controls MuMu through ADB, opens `ランキング` → `TOP20`, and reads the top 20 nicknames and total Pt directly from the active IL2CPP ranking data. Screenshots confirm screen readiness and provide a local preview; they are not the data source. GPU PaddleOCR remains available through explicit `captureMode: ocr`.
 
 ## Features
 
 - Automatically refreshes the in-game TOP20 leaderboard.
-- Reads up to seven player names and scores from a 1280 × 1280 emulator screen.
-- Uses a persistent PP-OCRv6 recognition process with NVIDIA GPU acceleration.
-- Rejects implausible OCR results using leaderboard ordering and score continuity checks.
-- Stores long-term history in a local SQLite database.
+- Reads all 20 displayed ranking entries directly through IL2CPP.
+- Retains an explicit GPU OCR mode for the original seven-row 1280 × 1280 layout.
+- Validates leaderboard ordering and score continuity within each activity.
+- Stores each activity in its own SQLite database, with dedicated total Pt tables.
 - Displays current totals, recent score changes, one-hour fitted pace, gaps, catch-up estimates, and an interactive score chart.
 - Provides a local control page and an optional read-only public page.
 
@@ -18,13 +18,12 @@ Instead, the collector controls a MuMu Player instance through ADB, opens `ラ�
 
 - Windows 10 or 11
 - [Node.js](https://nodejs.org/) 22.13 or newer
-- Python 3.12
 - [MuMu Player](https://www.mumuplayer.com/) with ADB enabled
-- An NVIDIA GPU supported by PaddlePaddle
-- [`uv`](https://docs.astral.sh/uv/) for the recommended Python setup
+- Rooted 64-bit MuMu, the validated D4DJ 10.8.0 APK, and an already running Frida 17.20.0 server
+- Python 3.12, an NVIDIA GPU and [`uv`](https://docs.astral.sh/uv/) only for explicit OCR mode
 - [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) in `PATH` for temporary public sharing
 
-The supplied screen regions and tap coordinates target a 1280 × 1280 MuMu window. Other layouts require configuration changes.
+The default tap coordinates target the verified 1920 × 1080 landscape layout. Other layouts require screenshot-based verification and configuration changes.
 
 ## Installation
 
@@ -49,7 +48,7 @@ Edit `config/muni.yml` and set at least:
 - `screen` and `taps`: emulator resolution and tap coordinates
 - `nameCorrections`: optional OCR name corrections specific to your leaderboard
 
-Prepare the PaddleOCR environment:
+IL2CPP mode does not require PaddleOCR installation. For explicit OCR mode, set `captureMode: ocr`, `maxEntries: 7`, a 1280 × 1280 screen and taps `back: (49,49)`, `ranking: (439,825)`, `top20: (640,185)`. Older configurations without `captureMode` must explicitly select OCR if they use seven entries. Then prepare the PaddleOCR environment:
 
 ```
 uv venv .venv-ppocr --python 3.12
@@ -57,7 +56,7 @@ uv pip install --python .venv-ppocr\Scripts\python.exe --index-url https://www.p
 uv pip install --python .venv-ppocr\Scripts\python.exe -r requirements-ocr.txt
 ```
 
-The default configuration requires `gpu:0`. The collector intentionally fails when the GPU runtime is unavailable instead of silently switching to a slower or different OCR engine.
+Explicit OCR mode requires `gpu:0`. The collector intentionally fails when the GPU runtime is unavailable instead of silently switching to a slower or different OCR engine.
 
 ## Running locally
 
@@ -74,8 +73,26 @@ On every interval the collector:
 1. Leaves the TOP20 screen when necessary.
 2. Reopens `ランキング` and `TOP20` to force a fresh in-game response.
 3. Captures the emulator screen through ADB.
-4. Recognizes player names and total scores.
+4. Reads nicknames and total Pt directly from the active IL2CPP TOP20 data.
 5. Validates and stores the result locally.
+
+## Default IL2CPP capture
+
+The example configuration uses `captureMode: il2cpp` and `maxEntries: 20`; an omitted `captureMode` also defaults to IL2CPP. The retained `ocr` settings and `nameCorrections` apply only to explicit OCR mode. The reader targets the validated D4DJ 10.8.0 APK on a rooted 64-bit MuMu instance with an already running Frida 17.20.0 server. It checks the APK digest and IL2CPP API bytes before attaching; game updates require a new validated layout. It does not start or restart services.
+
+The reader follows the active event ranking view and reads only rank, nickname and integer Pt from its `EventRankingData[]`. It validates a complete descending TOP20 twice and rejects a screen/list change during capture. The existing leave/re-enter/TOP20 refresh sequence, minute interval, score continuity checks and local history remain in use. Tap coordinates still need to match the actual emulator layout. OCR configuration is retained for explicit legacy mode; direct mode does not start PaddleOCR or silently fall back to it.
+
+A manual probe exports a private snapshot to `data/il2cpp-probe.json`:
+
+```powershell
+npm run probe:ranking -- --trace
+```
+
+The probe accepts `--adb` and `--serial` overrides without rewriting configuration. Add `--refresh --landscape-1080 --count 2` to validate two refreshed captures one configured interval apart. The observed 1920 x 1080 layout uses back (75,60), ranking (655,400), and TOP20 (960,280). The collector uses the same refresh function with its configured screen and taps. Trace output contains only operation stages, never player records. A pending native operation fails collection and prevents a fresh attachment in that client. Resolve the test process before retrying a stalled native call.
+
+Live validation passed two complete ADB-refreshed 20-row snapshots about 66 seconds apart, followed by handle cleanup and session detachment. The integrated collector also passed three automatic captures in the current activity database, with 60 ranking rows and complete ranks 1–20 in each capture. Long-running soak testing, exit-time disk failures and other game builds remain unverified.
+
+Each activity uses a new database at `data/events/<event-id>.sqlite`. The total Pt board uses its own `total_pt_captures` and `total_pt_ranking_entries` tables; future boards can use separate table prefixes within that activity database. Native collector state lives in `data/il2cpp-state.json`. Existing OCR history databases and state files are not opened or migrated by native mode. Same-player continuity applies within the current activity, so an earlier activity cannot reject a new activity's lower initial Pt. The event ID is internal routing metadata; probe exports contain only timestamps, ranks, nicknames and Pt. Reading and exporting additional boards is deferred until a live multi-board event provides evidence for that contract.
 
 ## Temporary public sharing
 

@@ -61,11 +61,11 @@ test("ships the collector and one-command local launcher", async () => {
 
   assert.equal(config.serial, "127.0.0.1:16384");
   assert.equal(config.deviceName, "Android Device");
-  assert.deepEqual(config.screen, { width: 1280, height: 1280 });
-  assert.equal(config.maxEntries, 7);
-  assert.deepEqual(config.taps.back, { x: 49, y: 49 });
-  assert.deepEqual(config.taps.ranking, { x: 439, y: 825 });
-  assert.deepEqual(config.taps.top20, { x: 640, y: 185 });
+  assert.deepEqual(config.screen, { width: 1920, height: 1080 });
+  assert.equal(config.maxEntries, 20);
+  assert.deepEqual(config.taps.back, { x: 75, y: 60 });
+  assert.deepEqual(config.taps.ranking, { x: 655, y: 400 });
+  assert.deepEqual(config.taps.top20, { x: 960, y: 280 });
   assert.equal(packageJson.scripts.local, "tsx scripts/local.ts");
   assert.equal(packageJson.scripts.collector, "tsx collector/server.ts");
   assert.equal(packageJson.scripts.gateway, "tsx scripts/public-gateway.ts");
@@ -80,8 +80,8 @@ test("ships the collector and one-command local launcher", async () => {
   assert.match(collector, /Android Device|config\.deviceName/);
   assert.match(collector, /selectLeaderboardScores/);
   assert.match(collector, /screencap/);
-  assert.match(collector, /config\.taps\.back/);
-  assert.match(collector, /historyDatabase\.insert/);
+  assert.match(collector, /refreshTop20/);
+  assert.match(collector, /database\.insert/);
   assert.match(collector, /\/api\/history/);
   assert.match(page, /公開ページ・閲覧専用/);
   assert.match(page, /latestPositiveMovement/);

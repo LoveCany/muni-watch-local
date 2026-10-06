@@ -4,7 +4,7 @@ import type { MuniConfig } from "./types.ts";
 const TOP_LEVEL_KEYS = [
   "adbPath", "serial", "deviceName", "eventName", "leaderboard", "screen", "maxEntries",
   "intervalMinutes", "auto", "waitAfterBackMs", "waitAfterRankingMs",
-  "waitAfterTop20Ms", "taps", "ocr", "nameCorrections",
+  "waitAfterTop20Ms", "taps", "ocr", "nameCorrections", "captureMode",
 ] as const;
 const TAP_KEYS = ["back", "ranking", "top20"] as const;
 
@@ -20,8 +20,8 @@ function requireRecord(value: unknown, path: string): asserts value is Record<st
   if (!isRecord(value)) fail(`${path} はオブジェクトで指定してください`);
 }
 
-function requireKeys(value: Record<string, unknown>, expected: readonly string[], path: string) {
-  const missing = expected.filter((key) => !(key in value));
+function requireKeys(value: Record<string, unknown>, expected: readonly string[], path: string, optional: readonly string[] = []) {
+  const missing = expected.filter((key) => !(key in value) && !optional.includes(key));
   const unknown = Object.keys(value).filter((key) => !expected.includes(key));
   if (missing.length) fail(`${path} に必須項目がありません: ${missing.join(", ")}`);
   if (unknown.length) fail(`${path} に未定義の項目があります: ${unknown.join(", ")}`);
@@ -39,7 +39,7 @@ function requireInteger(value: unknown, path: string, minimum: number, maximum: 
 
 export function validateMuniConfig(value: unknown): MuniConfig {
   requireRecord(value, "ルート");
-  requireKeys(value, TOP_LEVEL_KEYS, "ルート");
+  requireKeys(value, TOP_LEVEL_KEYS, "ルート", ["captureMode"]);
   for (const key of ["adbPath", "serial", "deviceName", "eventName", "leaderboard"] as const) requireString(value[key], key);
 
   const screen = value.screen;
@@ -48,7 +48,9 @@ export function validateMuniConfig(value: unknown): MuniConfig {
   requireInteger(screen.width, "screen.width", 320, 7680);
   requireInteger(screen.height, "screen.height", 320, 7680);
 
-  requireInteger(value.maxEntries, "maxEntries", 1, 7);
+  const captureMode = value.captureMode === undefined ? "il2cpp" : value.captureMode;
+  if (captureMode !== "ocr" && captureMode !== "il2cpp") fail("captureMode must be ocr or il2cpp");
+  requireInteger(value.maxEntries, "maxEntries", captureMode === "il2cpp" ? 20 : 1, captureMode === "il2cpp" ? 20 : 7);
   requireInteger(value.intervalMinutes, "intervalMinutes", 1, 60);
   if (typeof value.auto !== "boolean") fail("auto は true または false で指定してください");
   for (const key of ["waitAfterBackMs", "waitAfterRankingMs", "waitAfterTop20Ms"] as const) {
@@ -82,7 +84,7 @@ export function validateMuniConfig(value: unknown): MuniConfig {
     requireString(source, "nameCorrections のキー");
     requireString(replacement, `nameCorrections.${source}`);
   }
-  return value as MuniConfig;
+  return { ...value, captureMode } as MuniConfig;
 }
 
 export function parseMuniConfig(source: string): MuniConfig {

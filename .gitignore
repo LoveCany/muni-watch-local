@@ -1,5 +1,6 @@
 # Dependencies and local runtimes
 /node_modules/
+/.npm-cache/
 /.venv-ppocr/
 /.pnp
 .pnp.*

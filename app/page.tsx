@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import { catchUpLabel, catchUpMinutes, latestPositiveMovement, scoreChangeAgeMinutes, scoreChangeFreshness } from "@/lib/pace";
 
 function apiBase() {
@@ -243,7 +242,7 @@ function ScoreTrendChart({ history, entries, hours, onHoursChange }: { history: 
 export default function Home() {
   const [state, setState] = useState<MonitorState | null>(null);
   const [connected, setConnected] = useState(false);
-  const [canControl] = useState(() => typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname));
+  const [canControl, setCanControl] = useState(false);
   const [action, setAction] = useState<string | null>(null);
   const [trendHistory, setTrendHistory] = useState<Capture[]>([]);
   const [trendHours, setTrendHours] = useState(24);
@@ -278,6 +277,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    queueMicrotask(() => setCanControl(["localhost", "127.0.0.1"].includes(window.location.hostname)));
     queueMicrotask(() => void refresh());
     const poll = window.setInterval(refresh, 4000);
     const clock = window.setInterval(() => setNow(Date.now()), 1000);
@@ -314,7 +314,7 @@ export default function Home() {
   };
 
   const current = state?.history.at(-1);
-  const displayLimit = state?.config.maxEntries ?? 7;
+  const displayLimit = state?.config.maxEntries ?? 20;
   const displayRanks = useMemo(() => Array.from({ length: displayLimit }, (_, index) => index + 1), [displayLimit]);
   const entries = (current?.entries ?? []).slice(0, displayLimit);
   const recentCaptures = state?.history.slice(-6).reverse() ?? [];
@@ -407,12 +407,14 @@ export default function Home() {
             <label className="setting-row"><span>自動取得の間隔</span><select value={state?.config.intervalMinutes ?? 5} onChange={(event) => updateSettings({ intervalMinutes: Number(event.target.value) })} disabled={!connected || !canControl}>{[1, 2, 3].map((minute) => <option value={minute} key={minute}>{minute}分</option>)}</select></label>
             <label className="setting-row switch-row"><span>自動取得</span><input type="checkbox" checked={state?.config.auto ?? false} onChange={(event) => updateSettings({ auto: event.target.checked })} disabled={!connected || !canControl} /><span className="switch" /></label>
             <button className="capture-button" onClick={captureNow} disabled={!connected || !canControl || state?.status === "capturing"}><span>↻</span>{action ?? (canControl ? "今すぐ取得" : "公開ページでは閲覧のみ")}</button>
-            <div className="collector-foot"><span>次回</span><strong>{nextCapture == null ? "停止中" : `${Math.floor(nextCapture / 60)}:${String(nextCapture % 60).padStart(2, "0")}`}</strong><span>OCR</span><strong>{state?.ocr?.engine ?? "PaddleOCR"}</strong></div>
+            <div className="collector-foot"><span>次回</span><strong>{nextCapture == null ? "停止中" : `${Math.floor(nextCapture / 60)}:${String(nextCapture % 60).padStart(2, "0")}`}</strong><span>取得方式</span><strong>{state?.ocr?.engine ?? "IL2CPP"}</strong></div>
             {state?.lastError && <p className="error-copy">{collectorErrorLabel(state.lastError)}</p>}
           </aside>
         </section>}
 
-        {canControl && <section className="source-strip"><div><span className="section-kicker">最新の取得画像</span><h2>MuMuスクリーンショット</h2><p>ランキング上位{displayLimit}行をOCRで読み取ります。元画像はローカルに保存され、外部には送信されません。</p></div>{state?.lastUpdated ? <Image unoptimized width={1280} height={1280} src={`${apiBase()}/latest.png?t=${new Date(state.lastUpdated).getTime()}`} alt="MuMu TOP20の最新スクリーンショット" /> : <div className="image-placeholder">1280 × 1280</div>}</section>}
+        {/* The collector serves the original local screenshot directly without an image proxy. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {canControl && <section className="source-strip"><div><span className="section-kicker">最新の取得画像</span><h2>MuMuスクリーンショット</h2><p>{state?.ocr?.engine === "IL2CPP" ? "TOP20のランキングデータをゲーム内から直接取得します。" : `ランキング上位${displayLimit}行をOCRで読み取ります。`}元画像はローカルに保存され、外部には送信されません。</p></div>{state?.lastUpdated ? <img src={`${apiBase()}/latest.png?t=${new Date(state.lastUpdated).getTime()}`} alt="MuMu TOP20の最新スクリーンショット" /> : <div className="image-placeholder">取得待ち</div>}</section>}
       </div>
 
       <footer><span>むに Watch / ローカル版</span><span>MuMuから取得 · muni-webを参考に制作</span></footer>

@@ -4,18 +4,19 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import sharp from "sharp";
+import { isRankingImage, isTop20Image, refreshTop20 } from "./ranking-refresh.ts";
 import { createHistoryDatabase } from "./history-db.ts";
+import { createEventHistoryStore } from "./event-history.ts";
 import { parseMuniConfig, serializeMuniConfig } from "./config.ts";
 import { normalizeOcrName, stabilizeOcrName } from "./name-normalization.ts";
 import { createPpOcrClient } from "./ppocr-client.ts";
+import { createIl2CppClient } from "./il2cpp-client.ts";
 import { assertScoreContinuity, selectLeaderboardScores } from "./score-validation.ts";
 import type { Capture, CollectorState, MuniConfig, OcrRow, RankingEntry } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_FILE = path.join(ROOT, "config", "muni.yml");
-const STATE_FILE = path.join(ROOT, "data", "state.json");
 const SCREENSHOT_FILE = path.join(ROOT, "data", "latest.png");
 const HISTORY_DB_FILE = path.join(ROOT, "data", "muni-watch.sqlite");
 const REMOTE_SCREENSHOT = "/sdcard/muni-watch-latest.png";
@@ -41,6 +42,7 @@ try {
   }
   throw error;
 }
+const STATE_FILE = path.join(ROOT, "data", config.captureMode === "il2cpp" ? "il2cpp-state.json" : "state.json");
 const defaultState: CollectorState = {
   status: "booting", lastUpdated: null, lastError: null, history: [],
   mumu: { name: config.deviceName, connected: false, screen: "unknown" }, ocr: null,
@@ -53,11 +55,16 @@ try {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   state = defaultState;
 }
-const historyDatabase = createHistoryDatabase(HISTORY_DB_FILE);
-historyDatabase.backfill(state.history);
+const eventHistory = createEventHistoryStore(path.join(ROOT, "data", "events"));
+const legacyHistory = config.captureMode === "il2cpp" ? null : createHistoryDatabase(HISTORY_DB_FILE);
+legacyHistory?.backfill(state.history);
+if (config.captureMode === "il2cpp" && state.eventId) eventHistory.select(state.eventId);
+function currentHistory() { return legacyHistory ?? eventHistory.current; }
 const ocrClient = createPpOcrClient({ root: ROOT, config: config.ocr });
+const runtimeClient = createIl2CppClient(ROOT, config);
 let capturePromise: Promise<ReturnType<typeof publicState>> | null = null;
 let intervalHandle: NodeJS.Timeout | null = null;
+let shuttingDown = false;
 
 function sleep(ms: number) { return new Promise<void>((resolve) => setTimeout(resolve, ms)); }
 
@@ -77,36 +84,14 @@ async function takeScreenshot() {
   await adb(["-s", config.serial, "pull", REMOTE_SCREENSHOT, SCREENSHOT_FILE], 15000);
 }
 
-async function isRankingScreen() {
-  const image = sharp(SCREENSHOT_FILE);
-  const metadata = await image.metadata();
-  if (metadata.width !== config.screen.width || metadata.height !== config.screen.height) {
-    throw new Error(`MuMuの解像度を${config.screen.width}×${config.screen.height}に設定してください（現在：${metadata.width}×${metadata.height}）`);
-  }
-  const { data } = await image.extract({ left: 300, top: 120, width: 1, height: 1 }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const [red, green, blue] = data;
-  return blue > 130 && green < 105 && red < 145;
-}
-
 async function ensureTop20() {
-  await takeScreenshot();
-
-  // The game does not refresh the leaderboard while the TOP20 screen remains
-  // open. Leave the ranking screen first so re-entering it triggers a fresh
-  // server fetch, matching the manual in-game refresh flow.
-  if (await isRankingScreen()) {
-    await adb(["-s", config.serial, "shell", "input", "tap", String(config.taps.back.x), String(config.taps.back.y)]);
-    await sleep(config.waitAfterBackMs);
-    await takeScreenshot();
-    if (await isRankingScreen()) throw new Error("TOP20画面からイベントトップへ戻れませんでした");
-  }
-
-  await adb(["-s", config.serial, "shell", "input", "tap", String(config.taps.ranking.x), String(config.taps.ranking.y)]);
-  await sleep(config.waitAfterRankingMs);
-  await adb(["-s", config.serial, "shell", "input", "tap", String(config.taps.top20.x), String(config.taps.top20.y)]);
-  await sleep(config.waitAfterTop20Ms);
-  await takeScreenshot();
-  if (!(await isRankingScreen())) throw new Error("TOP20画面を開けませんでした。ゲームをイベントトップ画面に戻してください");
+  await refreshTop20(config, {
+    screenshot: takeScreenshot,
+    isRanking: () => isRankingImage(SCREENSHOT_FILE, config.screen),
+    isTop20: () => isTop20Image(SCREENSHOT_FILE, config.screen),
+    tap: async ({ x, y }) => { await adb(["-s", config.serial, "shell", "input", "tap", String(x), String(y)]); },
+    wait: sleep,
+  });
 }
 
 function cleanName(raw: unknown) {
@@ -139,9 +124,24 @@ async function readEntries() {
   return entries;
 }
 
+async function readRanking() {
+  if (config.captureMode !== "il2cpp") return { entries: await readEntries(), capturedAt: new Date().toISOString() };
+  const result = await runtimeClient.capture();
+  const { database, changed } = eventHistory.select(result.eventId);
+  if (changed) {
+    state.history = database.query({ hours: 48, maxPoints: 288 });
+    state.lastUpdated = state.history.at(-1)?.capturedAt ?? null;
+  }
+  state.eventId = result.eventId;
+  assertScoreContinuity(result.entries, state.history.slice(-288));
+  state.ocr = { engine: "IL2CPP", model: "EventRankingData", device: "MuMu", gpu: "unused" };
+  return result;
+}
+
 function publicState() {
   return {
     ...state,
+    eventId: undefined,
     config: { intervalMinutes: config.intervalMinutes, auto: config.auto, eventName: config.eventName, leaderboard: config.leaderboard, maxEntries: config.maxEntries },
   };
 }
@@ -152,6 +152,7 @@ async function persist() {
 }
 
 async function runCapture() {
+  if (shuttingDown) throw new Error("Collector is shutting down");
   if (capturePromise) return capturePromise;
   capturePromise = (async () => {
     state.status = "capturing";
@@ -160,10 +161,11 @@ async function runCapture() {
     try {
       await connectMuMu();
       await ensureTop20();
-      const entries = await readEntries();
-      const capturedAt = new Date().toISOString();
+      const { entries, capturedAt } = await readRanking();
       const capture: Capture = { id: `${Date.now()}`, capturedAt, entries };
-      historyDatabase.insert(capture);
+      const database = currentHistory();
+      if (!database) throw new Error("Current event history is not initialized");
+      database.insert(capture);
       state.history.push(capture);
       state.history = state.history.slice(-288);
       state.lastUpdated = capturedAt;
@@ -183,7 +185,7 @@ async function runCapture() {
 function schedule() {
   if (intervalHandle) clearInterval(intervalHandle);
   intervalHandle = null;
-  if (config.auto) intervalHandle = setInterval(() => void runCapture(), config.intervalMinutes * 60_000);
+  if (config.auto && !shuttingDown) intervalHandle = setInterval(() => void runCapture(), config.intervalMinutes * 60_000);
 }
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
@@ -211,10 +213,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && requestUrl.pathname === "/api/history") {
       const hours = Math.min(168, Math.max(1, Number(requestUrl.searchParams.get("hours")) || 24));
       const maxPoints = Math.min(480, Math.max(40, Number(requestUrl.searchParams.get("maxPoints")) || 240));
-      sendJson(response, 200, { history: historyDatabase.query({ hours, maxPoints }), hours }); return;
+      sendJson(response, 200, { history: currentHistory()?.query({ hours, maxPoints }) ?? [], hours }); return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/api/pace") {
-      sendJson(response, 200, { hours: 1, players: historyDatabase.fitPaces({ hours: 1 }) }); return;
+      sendJson(response, 200, { hours: 1, players: currentHistory()?.fitPaces({ hours: 1 }) ?? [] }); return;
     }
     if (request.method === "POST" && request.url === "/api/capture") { sendJson(response, 200, await runCapture()); return; }
     if (request.method === "POST" && request.url === "/api/settings") {
@@ -239,10 +241,23 @@ server.listen(PORT, "127.0.0.1", () => {
 });
 
 async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   if (intervalHandle) clearInterval(intervalHandle);
-  await ocrClient.close();
-  historyDatabase.close();
-  server.close(() => process.exit(0));
+  try { await capturePromise; }
+  catch { console.error("Capture failed during shutdown; continuing reader cleanup"); }
+  let exitCode = 0;
+  try {
+    await ocrClient.close();
+    await runtimeClient.close();
+  } catch {
+    exitCode = 1;
+    console.error("Reader cleanup failed; unresolved runtime ownership remains reserved");
+  } finally {
+    legacyHistory?.close();
+    eventHistory.close();
+    server.close(() => process.exit(exitCode));
+  }
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

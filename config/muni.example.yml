@@ -2,11 +2,13 @@ adbPath: C:\Program Files\Netease\MuMuPlayer\nx_device\15.0\shell\adb.exe
 serial: 127.0.0.1:16384
 deviceName: Android Device
 eventName: Current Event
-leaderboard: Total Points · TOP7
+leaderboard: Total Points · TOP20
+# Requires the supported APK and an already running Frida 17.20.0 server.
+captureMode: il2cpp
 screen:
-  width: 1280
-  height: 1280
-maxEntries: 7
+  width: 1920
+  height: 1080
+maxEntries: 20
 intervalMinutes: 1
 auto: true
 waitAfterBackMs: 1200
@@ -14,14 +16,15 @@ waitAfterRankingMs: 1500
 waitAfterTop20Ms: 1200
 taps:
   back:
-    x: 49
-    y: 49
+    x: 75
+    y: 60
   ranking:
-    x: 439
-    y: 825
+    x: 655
+    y: 400
   top20:
-    x: 640
-    y: 185
+    x: 960
+    y: 280
+# Retained for explicit OCR mode; unused by IL2CPP capture.
 ocr:
   pythonPath: .venv-ppocr\Scripts\python.exe
   modelName: PP-OCRv6_medium_rec

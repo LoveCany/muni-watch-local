@@ -11,6 +11,7 @@ export type OcrConfig = {
 };
 
 export type MuniConfig = {
+  captureMode: "ocr" | "il2cpp";
   adbPath: string;
   serial: string;
   deviceName: string;
@@ -30,7 +31,9 @@ export type MuniConfig = {
 
 export type RankingEntry = { rank: number; name: string; score: number; confidence?: number };
 export type Capture = { id: string; capturedAt: string; entries: RankingEntry[] };
+export type RuntimeRankingResult = { capturedAt: string; entries: RankingEntry[]; eventId: number };
 export type CollectorState = {
+  eventId?: number;
   status: "booting" | "capturing" | "idle" | "error";
   lastUpdated: string | null;
   lastError: string | null;

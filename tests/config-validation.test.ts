@@ -7,10 +7,10 @@ const validSource = await readFile(new URL("../config/muni.example.yml", import.
 
 test("parses and validates the production YAML configuration", () => {
   const config = parseMuniConfig(validSource);
-  assert.deepEqual(config.screen, { width: 1280, height: 1280 });
+  assert.deepEqual(config.screen, { width: 1920, height: 1080 });
   assert.equal(config.deviceName, "Android Device");
-  assert.equal(config.maxEntries, 7);
-  assert.deepEqual(config.taps.ranking, { x: 439, y: 825 });
+  assert.equal(config.maxEntries, 20);
+  assert.deepEqual(config.taps.ranking, { x: 655, y: 400 });
 });
 
 test("round-trips a valid configuration through YAML", () => {
@@ -35,12 +35,12 @@ test("rejects missing, unknown, and incorrectly typed fields", () => {
 
 test("rejects unsupported entry counts, intervals, and tap coordinates", () => {
   const valid = parseMuniConfig(validSource);
-  assert.throws(() => validateMuniConfig({ ...valid, maxEntries: 8 }), /maxEntries.*1～7/);
+  assert.throws(() => validateMuniConfig({ ...valid, maxEntries: 8 }), /maxEntries.*20～20/);
   assert.throws(() => validateMuniConfig({ ...valid, intervalMinutes: 0 }), /intervalMinutes.*1～60/);
   assert.throws(() => validateMuniConfig({
     ...valid,
     taps: { ...valid.taps, ranking: { x: 439, y: valid.screen.height } },
-  }), /taps\.ranking\.y.*0～1279/);
+  }), /taps\.ranking\.y.*0～1079/);
 });
 
 test("rejects invalid name correction mappings", () => {

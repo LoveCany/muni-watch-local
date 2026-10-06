@@ -10,6 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "collector": "tsx collector/server.ts",
+    "probe:ranking": "tsx scripts/probe-ranking.ts",
     "local": "tsx scripts/local.ts",
     "gateway": "tsx scripts/public-gateway.ts",
     "public": "npm run build && tsx scripts/public.ts",
@@ -21,6 +22,7 @@
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
+    "frida": "17.20.0",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6",
