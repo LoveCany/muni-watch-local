@@ -62,6 +62,16 @@ test("agent preflights configured native addresses and refuses changed instructi
   assert.throws(() => vm.runInContext(source, sandbox(relocated, true)), /API guard failed: il2cpp_runtime_invoke/);
 });
 
+test("callback mapping recognizes a previously loaded deleted inode without matching a different helper", () => {
+  const context = sandbox(profile);
+  vm.runInContext(createRuntimeAgentSource(profile, "/synthetic/helper.so", helper(profile)), context);
+  const deleted = "40002ec40000-40002ec42000 r--p 00000000 08:23 123 /synthetic/helper.so (deleted)";
+  context.syntheticMaps = deleted;
+  assert.equal(vm.runInContext("findHelperMapping(syntheticMaps)", context), deleted);
+  context.syntheticMaps = deleted.replace("helper.so", "different.so");
+  assert.equal(vm.runInContext("findHelperMapping(syntheticMaps)", context), undefined);
+});
+
 test("real ranking reader uses configured array, string and field offsets", () => {
   const changed = structuredClone(profile);
   changed.layout.array = { length: 40, data: 48 };

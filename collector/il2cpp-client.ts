@@ -7,6 +7,8 @@ import type * as frida from "frida";
 import { createRuntimeAgentSource } from "./runtime-profile.ts";
 import type { MuniConfig, RuntimeRankingResult } from "./types.ts";
 import { acquireRuntimeOwner } from "./runtime-owner.ts";
+import { withOperationDeadline } from "./operation-deadline.ts";
+import { ensureRuntimeHelper } from "./runtime-helper.ts";
 
 const execute = promisify(execFile);
 export function validateRuntimeRanking(value: unknown): RuntimeRankingResult {
@@ -50,8 +52,7 @@ export function createIl2CppClient(root: string, config: Pick<MuniConfig, "adbPa
   async function deadline<T>(operation: (cancel: frida.Cancellable) => Promise<T>): Promise<T> {
     if (!runtime) throw new Error("Frida runtime is not initialized");
     const cancel = new runtime.Cancellable();
-    const timer = setTimeout(() => { blocked = true; cancel.cancel(); }, 30000);
-    try { return await operation(cancel); } finally { clearTimeout(timer); }
+    return withOperationDeadline(() => operation(cancel), () => { blocked = true; cancel.cancel(); });
   }
   async function close() {
     progress("close_reader");
@@ -79,8 +80,7 @@ export function createIl2CppClient(root: string, config: Pick<MuniConfig, "adbPa
     const server = await adb("shell", "pidof", "frida-server");
     if (!/^\d+$/.test(server) || await adb("shell", "su", "-c", `'/proc/${server}/exe --version'`) !== "17.20.0")
       throw new Error("Start the matching Frida 17.20.0 server on the rooted emulator first");
-    await adb("push", helper, helperPath); await adb("shell", "chmod", "644", helperPath);
-    if ((await adb("shell", "sha256sum", helperPath)).split(/\s/)[0] !== digest) throw new Error("IL2CPP helper upload verification failed");
+    await ensureRuntimeHelper(adb, helper, helperPath, digest);
     const device = await frida.getDevice(config.serial, { timeout: 10000 });
     progress("attach");
     session = await deadline((cancel) => device.attach(pid, {}, cancel));
@@ -123,5 +123,10 @@ export function createIl2CppClient(root: string, config: Pick<MuniConfig, "adbPa
       }
       return reply.result;
     }, close,
+    async dispose() {
+      await close();
+      // Final process shutdown must also close Frida's device manager before Node tears down the addon.
+      if (runtime) await deadline(cancel => runtime!.getDeviceManager().close(cancel));
+    },
   };
 }

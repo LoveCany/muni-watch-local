@@ -26,8 +26,23 @@ test("refresh from event home skips back and aborts a failed exit", async () => 
   await refreshTop20(config, actions([false, true, true], calls));
   assert.ok(!calls.includes("75,60"));
   const failed: string[] = [];
-  await assert.rejects(refreshTop20(config, actions([true, true], failed)), /leave/);
+  await assert.rejects(refreshTop20(config, actions(Array(21).fill(true), failed)), /leave/);
   assert.ok(!failed.includes("655,400"));
+});
+
+test("refresh waits for a delayed exit without sending a second Back tap", async () => {
+  const calls: string[] = [];
+  await refreshTop20(config, actions([true, true, true, false, true, true], calls));
+  assert.equal(calls.filter(value => value === "75,60").length, 1);
+  assert.equal(calls.filter(value => value === "wait:500").length, 2);
+  assert.ok(calls.indexOf("655,400") > calls.lastIndexOf("wait:500"));
+});
+
+test("direct capture can leave ranking with Android Back instead of an ignored corner tap", async () => {
+  const calls: string[] = [];
+  await refreshTop20(config, { ...actions([true, false, true, true], calls), back: async () => { calls.push("keyevent:4"); } });
+  assert.equal(calls.filter(value => value === "keyevent:4").length, 1);
+  assert.ok(!calls.includes("75,60"));
 });
 test("landscape marker accepts ranking purple, rejects event home and wrong resolution", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "muni-refresh-"));

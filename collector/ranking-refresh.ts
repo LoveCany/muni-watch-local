@@ -30,6 +30,7 @@ export async function isTop20Image(imagePath: string, screen: MuniConfig["screen
 
 type RefreshConfig = Pick<MuniConfig, "taps" | "waitAfterBackMs" | "waitAfterRankingMs" | "waitAfterTop20Ms">;
 type RefreshActions = {
+  back?(): Promise<void>;
   screenshot(): Promise<void>;
   isRanking(): Promise<boolean>;
   isTop20?(): Promise<boolean>;
@@ -40,10 +41,16 @@ export async function refreshTop20(config: RefreshConfig, actions: RefreshAction
   await actions.screenshot();
   // Scores stay cached while the ranking view remains open.
   if (await actions.isRanking()) {
-    await actions.tap(config.taps.back);
+    if (actions.back) await actions.back();
+    else await actions.tap(config.taps.back);
     await actions.wait(config.waitAfterBackMs);
-    await actions.screenshot();
-    if (await actions.isRanking()) throw new Error("Could not leave the ranking screen");
+    // Wait for a slow transition without tapping Back twice and leaving the event entirely.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await actions.screenshot();
+      if (!(await actions.isRanking())) break;
+      if (attempt === 19) throw new Error("Could not leave the ranking screen");
+      await actions.wait(500);
+    }
   }
   await actions.tap(config.taps.ranking);
   await actions.wait(config.waitAfterRankingMs);

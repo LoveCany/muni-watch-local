@@ -2,8 +2,11 @@ import { spawn } from "node:child_process";
 import { existsSync, unwatchFile, watchFile } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServiceDiagnostics, recordProcessLifecycle } from "../collector/service-diagnostics.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const lifecycle = createServiceDiagnostics(root, "public_launcher");
+recordProcessLifecycle(lifecycle);
 const bundledCloudflared = path.join(root, "tools", "cloudflared.exe");
 const cloudflared = existsSync(bundledCloudflared) ? bundledCloudflared : "cloudflared";
 const quickTunnelConfig = path.join(root, "tools", "quick-tunnel.yml");
@@ -33,10 +36,13 @@ function spawnFrontend() {
     windowsHide: true,
   });
   child.on("error", (error) => {
+    lifecycle("child_error", { child: "frontend", errorName: error.name });
     console.error(error.message);
     if (!stopping) stop(1);
   });
-  child.on("exit", (code) => {
+  lifecycle("child_started", { child: "frontend", childPid: child.pid });
+  child.on("exit", (code, signal) => {
+    lifecycle("child_exit", { child: "frontend", childPid: child.pid, exitCode: code, signal });
     if (!stopping && !restartingFrontend) stop(code ?? 1);
   });
   return child;
@@ -84,6 +90,7 @@ watchFile(serverEntry, { interval: 500 }, (current, previous) => {
 function stop(code = 0) {
   if (stopping) return;
   stopping = true;
+  lifecycle("shutdown_requested", { exitCode: code });
   clearTimeout(reloadTimer);
   unwatchFile(serverEntry);
   frontend.kill();
@@ -96,11 +103,15 @@ function stop(code = 0) {
 }
 
 for (const child of [gateway, tunnel].filter((child): child is NonNullable<typeof child> => child !== null)) {
+  const name = child === gateway ? "gateway" : "tunnel";
+  lifecycle("child_started", { child: name, childPid: child.pid });
   child.on("error", (error) => {
+    lifecycle("child_error", { child: name, errorName: error.name });
     console.error(error.message);
     stop(1);
   });
   child.on("exit", (code, signal) => {
+    lifecycle("child_exit", { child: name, childPid: child.pid, exitCode: code, signal });
     if (!stopping && (code || signal)) stop(code ?? 1);
   });
 }

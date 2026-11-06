@@ -9,7 +9,7 @@ By default, the collector controls MuMu through ADB, opens `ランキング` →
 - Automatically refreshes the in-game TOP20 leaderboard.
 - Reads all 20 displayed ranking entries directly through IL2CPP.
 - Retains an explicit GPU OCR mode for the original seven-row 1280 × 1280 layout.
-- Validates leaderboard ordering and score continuity within each activity.
+- Validates leaderboard ordering and score continuity within each activity. Nicknames shared by multiple rows in the comparison window are excluded from name-based continuity and fitted pace calculations, because they cannot identify one player. Their individual rows are still stored.
 - Stores each activity in its own SQLite database, with dedicated total Pt tables.
 - Displays current totals, recent score changes, one-hour fitted pace, gaps, catch-up estimates, and an interactive score chart.
 - Provides a local control page and an optional read-only public page.
@@ -78,7 +78,7 @@ On every interval the collector:
 
 ## Default IL2CPP capture
 
-The example configuration uses `captureMode: il2cpp` and `maxEntries: 20`; an omitted `captureMode` also defaults to IL2CPP. The retained `ocr` settings and `nameCorrections` apply only to explicit OCR mode. The reader targets the validated D4DJ 10.8.0 APK on a rooted 64-bit MuMu instance with an already running Frida 17.20.0 server. It validates IL2CPP instruction bytes before managed calls instead of requiring an exact APK SHA256. Game updates require the addresses and layouts in `config/il2cpp-runtime.json` to be checked against the new binary and metadata. It does not start or restart services.
+The example configuration uses `captureMode: il2cpp` and `maxEntries: 20`; an omitted `captureMode` also defaults to IL2CPP. The retained `ocr` settings and `nameCorrections` apply only to explicit OCR mode. The active profile targets the statically reviewed and live-tested D4DJ 11.0.1 APK on a rooted 64-bit MuMu instance with an already running Frida 17.20.0 server. It validates IL2CPP instruction bytes before managed calls instead of requiring an exact APK SHA256. Game updates require the addresses and layouts in `config/il2cpp-runtime.json` to be checked against the new binary and metadata. It does not start or restart services.
 
 The reader follows the active event ranking view and reads only rank, nickname and integer Pt from its `EventRankingData[]`. It validates a complete descending TOP20 twice and rejects a screen/list change during capture. The existing leave/re-enter/TOP20 refresh sequence, minute interval, score continuity checks and local history remain in use. Tap coordinates still need to match the actual emulator layout. OCR configuration is retained for explicit legacy mode; direct mode does not start PaddleOCR or silently fall back to it.
 
@@ -88,11 +88,13 @@ A manual probe exports a private snapshot to `data/il2cpp-probe.json`:
 npm run probe:ranking -- --trace
 ```
 
-The probe accepts `--adb` and `--serial` overrides without rewriting configuration. Add `--refresh --landscape-1080 --count 2` to validate two refreshed captures one configured interval apart. The observed 1920 x 1080 layout uses back (75,60), ranking (655,400), and TOP20 (960,280). The collector uses the same refresh function with its configured screen and taps. Trace output contains only operation stages, never player records. A pending native operation fails collection and prevents a fresh attachment in that client. Resolve the test process before retrying a stalled native call.
+The probe accepts `--adb` and `--serial` overrides without rewriting configuration. Add `--refresh --landscape-1080 --count 2` to validate two refreshed captures one configured interval apart. The observed 1920 x 1080 layout uses back (75,60), ranking (655,400), and TOP20 (960,280). The collector uses the same refresh function with its configured screen and taps. Trace output contains only operation stages, never player records. A native operation that does not settle within 30 seconds fails the host capture even if cancellation is ignored. A pending native operation prevents a fresh attachment in that client. Resolve the test process before retrying a stalled native call.
 
-Live validation passed two complete ADB-refreshed 20-row snapshots about 66 seconds apart, followed by handle cleanup and session detachment. The integrated collector also passed three automatic captures in the current activity database, with 60 ranking rows and complete ranks 1–20 in each capture. Long-running soak testing, exit-time disk failures and other game builds remain unverified.
+Prior live validation on D4DJ 10.8.0 passed two complete ADB-refreshed 20-row snapshots about 66 seconds apart, followed by handle cleanup and session detachment. The integrated collector also passed three automatic captures in the current activity database, with 60 ranking rows and complete ranks 1–20 in each capture. Long-running soak testing, exit-time disk failures and other game builds remain unverified.
 
 Each activity uses a new database at `data/events/<event-id>.sqlite`. The total Pt board uses its own `total_pt_captures` and `total_pt_ranking_entries` tables; future boards can use separate table prefixes within that activity database. Native collector state lives in `data/il2cpp-state.json`. Existing OCR history databases and state files are not opened or migrated by native mode. Same-player continuity applies within the current activity, so an earlier activity cannot reject a new activity's lower initial Pt. The event ID is internal routing metadata; probe exports contain only timestamps, ranks, nicknames and Pt. Reading and exporting additional boards is deferred until a live multi-board event provides evidence for that contract.
+
+The shared D4DJ analysis workspace contains `IL2CPP_11.0.1_AUDIT.md`, which records the new API addresses, unchanged layouts, source provenance and cleanup. Two ADB-refreshed TOP20 captures and clean reader shutdown passed on 11.0.1; long-running collection and future activities remain unverified.
 
 ## Updating the IL2CPP runtime profile
 
@@ -107,7 +109,15 @@ After a game update, compare the matching Il2CppDumper output (`dump.cs`, `scrip
 
 If `layout.array.data` changes, rebuild `unity_invoke.so` with `uv run --cache-dir .npm-cache/uv --no-project --with keystone-engine==0.9.2 python collector/native/build_helper.py`. Its assembly reads this header offset from the same profile. The client checks the embedded helper layout marker before attaching and rejects a stale helper. Other profile-only address/field changes do not require rebuilding the helper.
 
-An invalid profile fails before attachment. Every configured native API target is checked on script load, and the main-thread callback targets are checked again when posted. The helper's SHA256 still verifies its upload; only the whole-APK SHA256 restriction has been removed. Restart the collector through its normal clean shutdown before loading a changed profile, then validate one complete capture, cleanup, and two refreshed captures. A new game build remains unverified until those live checks pass.
+An invalid profile fails before attachment. Every configured native API target is checked on script load, and the main-thread callback targets are checked again when posted. Content-addressed helper files are uploaded only if absent; an existing matching helper is reused without overwriting its loaded inode. Guest mappings from an earlier overwritten inode are recognized only for the exact helper path and a matching embedded layout marker. The helper's SHA256 still verifies its upload; only the whole-APK SHA256 restriction has been removed. Restart the collector through its normal clean shutdown before loading a changed profile, then validate one complete capture, cleanup, and two refreshed captures. A new game build remains unverified until those live checks pass.
+
+## Service recovery and diagnostics
+
+Lifecycle records are written locally under `data/service-logs/<service>-<pid>.jsonl`, one file per writer. They contain start/exit times, process/parent IDs, child exit codes and signals, and error categories. They do not record configuration or ranking rows. When launching services in the background, retain stdout/stderr as local files as well; lifecycle hooks cannot run when Windows forcibly terminates a process.
+
+The local launcher records a child failure without immediately killing the other service. Scheduled capture failures, including persistence failures, are handled at the background-operation boundary instead of becoming unhandled Promise rejections. In IL2CPP mode, refresh uses the device's Android Back key; a corner tap can be ignored even while the game continues rendering. Transitions are checked with a finite wait, without sending Back twice.
+
+`POST http://127.0.0.1:4317/api/shutdown` requests a clean collector shutdown: wait for the active capture, release reader resources, close the Frida DeviceManager, close history, then exit. The local launcher uses this endpoint before stopping. The public gateway rejects this POST just like other control requests. If a native operation is unresolved, its ownership marker remains reserved; do not delete it and inject another reader into the same game process.
 
 ## Temporary public sharing
 

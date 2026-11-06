@@ -1,5 +1,6 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { Capture, RankingEntry } from "./types.ts";
+import { ambiguousNicknames } from "./score-validation.ts";
 
 type QueryOptions = { hours?: number; maxPoints?: number };
 type PaceResult = { rank: number; name: string; rate: number | null; samples: number; from?: string; to?: string };
@@ -121,7 +122,9 @@ export function createHistoryDatabase(filename: string, { tablePrefix = "", maxE
   function fitPaces({ hours = 1 }: Pick<QueryOptions, "hours"> = {}): PaceResult[] {
     const captures = query({ hours, maxPoints: 10_000 });
     const latestEntries = captures.at(-1)?.entries ?? [];
+    const ambiguous = ambiguousNicknames(captures);
     return latestEntries.map((latestEntry) => {
+      if (ambiguous.has(latestEntry.name)) return { rank: latestEntry.rank, name: latestEntry.name, rate: null, samples: 0 };
       const samples = captures.flatMap((capture) => {
         const entry = capture.entries.find((item) => item.name === latestEntry.name);
         return entry ? [{ time: new Date(capture.capturedAt).getTime(), score: entry.score }] : [];

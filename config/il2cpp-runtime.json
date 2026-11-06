@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "label": "D4DJ 10.8.0 ARM64 / MuMu Houdini 7",
+  "label": "D4DJ 11.0.1 ARM64 / MuMu Houdini 7",
   "pointerSize": 8,
   "buildGuard": {
-    "rva": 54967192,
+    "rva": 56280172,
     "guard": "fe0f1ef8f44f01a9"
   },
   "nativeBridge": {
@@ -20,67 +20,67 @@
   },
   "api": {
     "il2cpp_gchandle_new": {
-      "rva": 53351364,
+      "rva": 54286312,
       "guard": "71e8ff17ff0301d1"
     },
     "il2cpp_object_get_class": {
-      "rva": 53351708,
+      "rva": 54286656,
       "guard": "cfcb0014dccc0014"
     },
     "il2cpp_thread_attach": {
-      "rva": 53351848,
+      "rva": 54286796,
       "guard": "80200114a7200114"
     },
     "il2cpp_class_from_name": {
-      "rva": 53349512,
+      "rva": 54284460,
       "guard": "ef6b011413630114"
     },
     "il2cpp_runtime_invoke": {
-      "rva": 53351792,
+      "rva": 54286740,
       "guard": "0859011417520114"
     },
     "il2cpp_domain_get_assemblies": {
-      "rva": 53350744,
+      "rva": 54285692,
       "guard": "fe4fbfa9f30301aa"
     },
     "il2cpp_domain_get": {
-      "rva": 53350732,
+      "rva": 54285680,
       "guard": "e9120114e00301aa"
     },
     "il2cpp_thread_detach": {
-      "rva": 53351852,
+      "rva": 54286800,
       "guard": "a7200114da230114"
     },
     "il2cpp_string_new": {
-      "rva": 53351820,
+      "rva": 54286768,
       "guard": "efc30014eec30014"
     },
     "il2cpp_array_new": {
-      "rva": 53349436,
+      "rva": 54284384,
       "guard": "79cd00147fcd0014"
     },
     "il2cpp_assembly_get_image": {
-      "rva": 53349456,
+      "rva": 54284404,
       "guard": "02ce001423630114"
     },
     "il2cpp_class_get_method_from_name": {
-      "rva": 53349552,
+      "rva": 54284500,
       "guard": "15640114ead50014"
     },
     "il2cpp_object_new": {
-      "rva": 53351720,
+      "rva": 54286668,
       "guard": "fe0f1ff8a7cc0094"
     },
     "il2cpp_class_get_type": {
-      "rva": 53349680,
+      "rva": 54284628,
       "guard": "00800091c0035fd6"
     },
     "il2cpp_gchandle_free": {
-      "rva": 53351492,
+      "rva": 54286440,
       "guard": "a7e9ff1700028052"
     },
     "il2cpp_type_get_object": {
-      "rva": 53351932,
+      "rva": 54286880,
       "guard": "0ed3001400430114"
     }
   },

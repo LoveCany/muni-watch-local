@@ -19,6 +19,7 @@ async function refresh() {
   }
   await mkdir(path.join(root, "data"), { recursive: true });
   await refreshTop20(config, {
+    back: () => adb("shell", "input", "keyevent", "4"),
     screenshot: async () => { await adb("shell", "screencap", "-p", remote); await adb("pull", remote, image); },
     isRanking: () => isRankingImage(image, config.screen),
     isTop20: () => isTop20Image(image, config.screen),
@@ -55,7 +56,7 @@ try {
   console.error(error instanceof Error ? error.message : "Ranking probe failed");
   process.exitCode = 1;
 } finally {
-  try { await client.close(); }
+  try { await client.dispose(); }
   catch (error) {
     console.error(error instanceof Error ? error.message : "Ranking reader cleanup failed");
     process.exitCode = 1;

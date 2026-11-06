@@ -12,6 +12,7 @@ import { normalizeOcrName, stabilizeOcrName } from "./name-normalization.ts";
 import { createPpOcrClient } from "./ppocr-client.ts";
 import { createIl2CppClient } from "./il2cpp-client.ts";
 import { assertScoreContinuity, selectLeaderboardScores } from "./score-validation.ts";
+import { createServiceDiagnostics, recordProcessLifecycle, runBackgroundCapture } from "./service-diagnostics.ts";
 import type { Capture, CollectorState, MuniConfig, OcrRow, RankingEntry } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -21,6 +22,8 @@ const SCREENSHOT_FILE = path.join(ROOT, "data", "latest.png");
 const HISTORY_DB_FILE = path.join(ROOT, "data", "muni-watch.sqlite");
 const REMOTE_SCREENSHOT = "/sdcard/muni-watch-latest.png";
 const PORT = 4317;
+const lifecycle = createServiceDiagnostics(ROOT, "collector");
+recordProcessLifecycle(lifecycle);
 
 const rows: OcrRow[] = [
   { rank: 1, name: { left: 438, top: 235, width: 285, height: 36 }, score: { left: 960, top: 304, width: 180, height: 36 } },
@@ -86,6 +89,7 @@ async function takeScreenshot() {
 
 async function ensureTop20() {
   await refreshTop20(config, {
+    back: config.captureMode === "il2cpp" ? async () => { await adb(["-s", config.serial, "shell", "input", "keyevent", "4"]); } : undefined,
     screenshot: takeScreenshot,
     isRanking: () => isRankingImage(SCREENSHOT_FILE, config.screen),
     isTop20: () => isTop20Image(SCREENSHOT_FILE, config.screen),
@@ -185,7 +189,16 @@ async function runCapture() {
 function schedule() {
   if (intervalHandle) clearInterval(intervalHandle);
   intervalHandle = null;
-  if (config.auto && !shuttingDown) intervalHandle = setInterval(() => void runCapture(), config.intervalMinutes * 60_000);
+  if (config.auto && !shuttingDown) intervalHandle = setInterval(() => void backgroundCapture(), config.intervalMinutes * 60_000);
+}
+
+function backgroundCapture() {
+  return runBackgroundCapture(runCapture, error => {
+    state.status = "error";
+    state.lastError = "Collector background operation failed; see local service diagnostics";
+    const code = (error as NodeJS.ErrnoException)?.code;
+    lifecycle("background_capture_failed", { errorCode: typeof code === "string" && /^[A-Z0-9_]+$/.test(code) ? code : undefined });
+  });
 }
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
@@ -219,6 +232,10 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, { hours: 1, players: currentHistory()?.fitPaces({ hours: 1 }) ?? [] }); return;
     }
     if (request.method === "POST" && request.url === "/api/capture") { sendJson(response, 200, await runCapture()); return; }
+    if (request.method === "POST" && request.url === "/api/shutdown") {
+      sendJson(response, 202, { status: "stopping" });
+      void shutdown(); return;
+    }
     if (request.method === "POST" && request.url === "/api/settings") {
       const body = await readBody(request);
       if (typeof body.intervalMinutes === "number") config.intervalMinutes = Math.min(60, Math.max(1, Math.round(body.intervalMinutes)));
@@ -237,19 +254,20 @@ const server = http.createServer(async (request, response) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`むに Watch collector: http://127.0.0.1:${PORT}`);
   schedule();
-  setTimeout(() => void runCapture(), 800);
+  setTimeout(() => void backgroundCapture(), 800);
 });
 
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  lifecycle("shutdown_requested");
   if (intervalHandle) clearInterval(intervalHandle);
   try { await capturePromise; }
   catch { console.error("Capture failed during shutdown; continuing reader cleanup"); }
   let exitCode = 0;
   try {
     await ocrClient.close();
-    await runtimeClient.close();
+    await runtimeClient.dispose();
   } catch {
     exitCode = 1;
     console.error("Reader cleanup failed; unresolved runtime ownership remains reserved");

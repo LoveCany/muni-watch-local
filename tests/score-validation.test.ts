@@ -27,3 +27,22 @@ test("rejects a score decrease for the same stabilized player", () => {
   assert.throws(() => assertScoreContinuity([{ rank: 3, name: "player", score: 999 }], history), /スコアが減少/);
   assert.doesNotThrow(() => assertScoreContinuity([{ rank: 3, name: "player", score: 1001 }], history));
 });
+
+test("does not treat two current players sharing a nickname as one player", () => {
+  const history = [{ entries: [{ rank: 1, name: "shared", score: 1000 }] }];
+  assert.doesNotThrow(() => assertScoreContinuity([
+    { rank: 1, name: "shared", score: 1010 },
+    { rank: 2, name: "shared", score: 800 },
+  ], history));
+});
+
+test("does not use an ambiguous historical nickname after one player leaves", () => {
+  const history = [{ entries: [
+    { rank: 1, name: "shared", score: 1000 },
+    { rank: 2, name: "shared", score: 800 },
+  ] }];
+  assert.doesNotThrow(() => assertScoreContinuity([{ rank: 1, name: "shared", score: 790 }], history));
+  assert.throws(() => assertScoreContinuity([{ rank: 1, name: "unique", score: 9 }], [
+    ...history, { entries: [{ rank: 1, name: "unique", score: 10 }] },
+  ]), /スコアが減少/);
+});

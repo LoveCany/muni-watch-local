@@ -206,6 +206,11 @@ function detachWorker() {
     api('il2cpp_thread_detach','void',['pointer'],'VJ')(workerThread);
     workerThread=nil;
 }
+function findHelperMapping(maps) {
+    return maps.split('\n').find(line =>
+        line.replace(/ \(deleted\)$/, '').endsWith(config.helperPath) && /r--p 00000000 /.test(line) &&
+        (Process.arch !== 'x64' || line.startsWith(runtime.nativeBridge.guestMapPrefix)));
+}
 function prepareQueue() {
     attachJavaThread();
     send({stage:'queue_domain'});
@@ -216,11 +221,12 @@ function prepareQueue() {
     const context=invokeRaw(klass('Cysharp.Threading.Tasks','PlayerLoopHelper'),'get_UnitySynchronizationContext');
     if(context.isNull()) throw new Error('Unity synchronization context is not initialized');
     send({stage:'queue_resolve_callback'});
-    const mapping=File.readAllText('/proc/self/maps').split('\n').find(
-        line=>line.endsWith(config.helperPath) && /r--p 00000000 /.test(line) &&
-              (Process.arch!=='x64' || line.startsWith(runtime.nativeBridge.guestMapPrefix)));
+    const mapping=findHelperMapping(File.readAllText('/proc/self/maps'));
     if(!mapping) throw new Error('Cannot identify the guest queue callback mapping');
-    const helper=ptr('0x'+mapping.split('-')[0]).add(0x1000);
+    const helperBase=ptr('0x'+mapping.split('-')[0]);
+    if(helperBase.add(0x500).readUtf8String(8)!=='MWABI001' || helperBase.add(0x508).readU32()!==layout.array.data)
+        throw new Error('The loaded helper does not match the managed array layout');
+    const helper=helperBase.add(0x1000);
     const template=method(klass('System','GC'),'KeepAlive',1);
     if(template.add(layout.methodInfo.parameterCount).readU8()!==1 || !(template.add(layout.methodInfo.flags).readU16() & layout.methodInfo.staticMask))
         throw new Error('Unexpected callback method metadata layout');
