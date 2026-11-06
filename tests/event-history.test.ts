@@ -12,20 +12,20 @@ function capture(score: number, count = 20) {
     ({ rank: i + 1, name: "Synthetic player " + (i + 1), score: score - i })) };
 }
 
-test("pace fitting excludes colliding nicknames without changing stored rows", async () => {
+test("pace fitting follows ranks across nickname collisions and renames", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "muni-collision-"));
   const database = createHistoryDatabase(path.join(dir, "history.sqlite"));
   try {
     for (let i = 0; i < 2; i++) database.insert({
       id: String(i), capturedAt: new Date(Date.now() - (2 - i) * 60000).toISOString(),
       entries: [
-        { rank: 1, name: "shared", score: 1000 + i * 10 },
+        { rank: 1, name: i ? "renamed" : "shared", score: 1000 + i * 20 },
         { rank: 2, name: "shared", score: 800 + i * 10 },
         { rank: 3, name: "unique", score: 600 + i * 10 },
       ],
     });
     const fitted = database.fitPaces();
-    assert.deepEqual(fitted.slice(0, 2).map(row => row.rate), [null, null]);
+    assert.deepEqual(fitted.slice(0, 2).map(row => row.rate), [1200, 600]);
     assert.equal(fitted[2].rate, 600);
     assert.equal(database.query().at(-1)?.entries.length, 3);
   } finally { database.close(); await rm(dir, { recursive: true, force: true }); }

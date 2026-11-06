@@ -42,30 +42,15 @@ export function selectLeaderboardScores(recognizedEntries: Array<Pick<Recognized
   return (best as { selected: SelectedScore[] }).selected;
 }
 
-export function ambiguousNicknames(captures: Array<{ entries: RankingEntry[] }>): Set<string> {
-  const ambiguous = new Set<string>();
-  for (const capture of captures) {
-    const seen = new Set<string>();
-    for (const entry of capture.entries) {
-      if (seen.has(entry.name)) ambiguous.add(entry.name);
-      seen.add(entry.name);
-    }
-  }
-  return ambiguous;
-}
-
 export function assertScoreContinuity(entries: RankingEntry[], recentCaptures: Array<{ entries: RankingEntry[] }>): void {
-  // Nicknames are not unique identities. A collision invalidates name-based continuity for this window.
-  const ambiguous = ambiguousNicknames([...recentCaptures, { entries }]);
-  const latestByName = new Map<string, number>();
+  const latestByRank = new Map<number, number>();
   for (const capture of recentCaptures) {
-    for (const entry of capture.entries ?? []) latestByName.set(entry.name, entry.score);
+    for (const entry of capture.entries) latestByRank.set(entry.rank, entry.score);
   }
   for (const entry of entries) {
-    if (ambiguous.has(entry.name)) continue;
-    const previousScore = latestByName.get(entry.name);
+    const previousScore = latestByRank.get(entry.rank);
     if (previousScore != null && entry.score < previousScore) {
-      throw new Error(`${entry.rank}位 ${entry.name} のスコアが減少しています (${previousScore} → ${entry.score})`);
+      throw new Error(`${entry.rank}位のスコアが減少しています (${previousScore} → ${entry.score})`);
     }
   }
 }

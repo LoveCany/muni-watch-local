@@ -9,7 +9,7 @@ By default, the collector controls MuMu through ADB, opens `ランキング` →
 - Automatically refreshes the in-game TOP20 leaderboard.
 - Reads all 20 displayed ranking entries directly through IL2CPP.
 - Retains an explicit GPU OCR mode for the original seven-row 1280 × 1280 layout.
-- Validates leaderboard ordering and score continuity within each activity. Nicknames shared by multiple rows in the comparison window are excluded from name-based continuity and fitted pace calculations, because they cannot identify one player. Their individual rows are still stored.
+- Validates leaderboard ordering and score continuity within each activity. Continuity, score curves, deltas and fitted pace follow each rank, regardless of nickname changes or changes in the player occupying that rank. Nicknames are display labels; chart tooltips show the nickname recorded at that time.
 - Stores each activity in its own SQLite database, with dedicated total Pt tables.
 - Displays current totals, recent score changes, one-hour fitted pace, gaps, catch-up estimates, and an interactive score chart.
 - Provides a local control page and an optional read-only public page.
@@ -92,7 +92,7 @@ The probe accepts `--adb` and `--serial` overrides without rewriting configurati
 
 Prior live validation on D4DJ 10.8.0 passed two complete ADB-refreshed 20-row snapshots about 66 seconds apart, followed by handle cleanup and session detachment. The integrated collector also passed three automatic captures in the current activity database, with 60 ranking rows and complete ranks 1–20 in each capture. Long-running soak testing, exit-time disk failures and other game builds remain unverified.
 
-Each activity uses a new database at `data/events/<event-id>.sqlite`. The total Pt board uses its own `total_pt_captures` and `total_pt_ranking_entries` tables; future boards can use separate table prefixes within that activity database. Native collector state lives in `data/il2cpp-state.json`. Existing OCR history databases and state files are not opened or migrated by native mode. Same-player continuity applies within the current activity, so an earlier activity cannot reject a new activity's lower initial Pt. The event ID is internal routing metadata; probe exports contain only timestamps, ranks, nicknames and Pt. Reading and exporting additional boards is deferred until a live multi-board event provides evidence for that contract.
+Each activity uses a new database at `data/events/<event-id>.sqlite`. The total Pt board uses its own `total_pt_captures` and `total_pt_ranking_entries` tables; future boards can use separate table prefixes within that activity database. Native collector state lives in `data/il2cpp-state.json`. Existing OCR history databases and state files are not opened or migrated by native mode. Same-rank continuity applies within the current activity, so an earlier activity cannot reject a new activity's lower initial Pt. The event ID is internal routing metadata; probe exports contain only timestamps, ranks, nicknames and Pt. Reading and exporting additional boards is deferred until a live multi-board event provides evidence for that contract.
 
 The shared D4DJ analysis workspace contains `IL2CPP_11.0.1_AUDIT.md`, which records the new API addresses, unchanged layouts, source provenance and cleanup. Two ADB-refreshed TOP20 captures and clean reader shutdown passed on 11.0.1; long-running collection and future activities remain unverified.
 

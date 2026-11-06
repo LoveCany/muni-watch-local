@@ -30,12 +30,10 @@ export function catchUpLabel(minutes: number | null) {
 export function latestPositiveMovement(history: PaceCapture[], entry: PaceEntry) {
   const playerSnapshots: Array<{ capturedAt: string; score: number }> = [];
 
-  // Only use the current player's uninterrupted stay at this rank. Missing OCR
-  // rows are ignored, while a different player starts a new pace history.
+  // A series represents the score at a rank, even when its occupant or nickname changes.
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const rankedEntry = history[index].entries.find((item) => item.rank === entry.rank);
     if (!rankedEntry) continue;
-    if (rankedEntry.name !== entry.name) break;
     playerSnapshots.push({ capturedAt: history[index].capturedAt, score: rankedEntry.score });
   }
 
@@ -58,4 +56,8 @@ export function latestPositiveMovement(history: PaceCapture[], entry: PaceEntry)
   }
 
   return null;
+}
+
+export function scoreAtRank(capture: PaceCapture | undefined, rank: number) {
+  return capture?.entries.find(entry => entry.rank === rank)?.score ?? null;
 }

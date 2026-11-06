@@ -22,9 +22,9 @@ test("rejects score candidates that cannot form descending leaderboard order", (
   ]), /ランキング順/);
 });
 
-test("rejects a score decrease for the same stabilized player", () => {
+test("rejects a score decrease at the same rank even after a nickname change", () => {
   const history = [{ entries: [{ rank: 3, name: "player", score: 1000 }] }];
-  assert.throws(() => assertScoreContinuity([{ rank: 3, name: "player", score: 999 }], history), /スコアが減少/);
+  assert.throws(() => assertScoreContinuity([{ rank: 3, name: "renamed", score: 999 }], history), /スコアが減少/);
   assert.doesNotThrow(() => assertScoreContinuity([{ rank: 3, name: "player", score: 1001 }], history));
 });
 
@@ -36,13 +36,20 @@ test("does not treat two current players sharing a nickname as one player", () =
   ], history));
 });
 
-test("does not use an ambiguous historical nickname after one player leaves", () => {
+test("checks each rank independently when nicknames collide or players swap ranks", () => {
   const history = [{ entries: [
     { rank: 1, name: "shared", score: 1000 },
     { rank: 2, name: "shared", score: 800 },
   ] }];
-  assert.doesNotThrow(() => assertScoreContinuity([{ rank: 1, name: "shared", score: 790 }], history));
+  assert.throws(() => assertScoreContinuity([{ rank: 1, name: "shared", score: 790 }], history), /スコアが減少/);
   assert.throws(() => assertScoreContinuity([{ rank: 1, name: "unique", score: 9 }], [
     ...history, { entries: [{ rank: 1, name: "unique", score: 10 }] },
   ]), /スコアが減少/);
+  assert.doesNotThrow(() => assertScoreContinuity([
+    { rank: 1, name: "lower", score: 1100 },
+    { rank: 2, name: "higher", score: 1000 },
+  ], [{ entries: [
+    { rank: 1, name: "higher", score: 1000 },
+    { rank: 2, name: "lower", score: 800 },
+  ] }]));
 });

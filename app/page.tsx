@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { catchUpLabel, catchUpMinutes, latestPositiveMovement, scoreChangeAgeMinutes, scoreChangeFreshness } from "@/lib/pace";
+import { catchUpLabel, catchUpMinutes, latestPositiveMovement, scoreChangeAgeMinutes, scoreChangeFreshness, scoreAtRank } from "@/lib/pace";
 
 function apiBase() {
   if (typeof window === "undefined") return "";
@@ -55,10 +55,6 @@ function elapsedLabel(value?: string | null) {
   return `${Math.floor(seconds / 3600)}時間前`;
 }
 
-function scoreAt(capture: Capture | undefined, rank: number) {
-  return capture?.entries.find((entry) => entry.rank === rank)?.score ?? null;
-}
-
 const rankColors = ["#d5960f", "#2168e8", "#d55374", "#16845f", "#7656c8", "#e06b25", "#118f9e"];
 
 function ScoreTrendChart({ history, entries, hours, onHoursChange }: { history: Capture[]; entries: Entry[]; hours: number; onHoursChange: (hours: number) => void }) {
@@ -86,7 +82,7 @@ function ScoreTrendChart({ history, entries, hours, onHoursChange }: { history: 
       const plot = { left: 76, right: 20, top: 18, bottom: 38 };
       const plotWidth = width - plot.left - plot.right;
       const plotHeight = height - plot.top - plot.bottom;
-      const series = players.map((player) => captures.map((capture) => capture.entries.find((entry) => entry.name === player.name)?.score ?? null));
+      const series = players.map((player) => captures.map((capture) => scoreAtRank(capture, player.rank)));
       const allValues = series.flatMap((values) => values.filter((value): value is number => value != null));
 
       if (captures.length < 2 || allValues.length < 2) {
@@ -211,8 +207,8 @@ function ScoreTrendChart({ history, entries, hours, onHoursChange }: { history: 
           <div className="trend-window" aria-label="グラフの表示期間">
             {[1, 6, 24, 168].map((value) => <button type="button" className={hours === value ? "active" : ""} onClick={() => onHoursChange(value)} key={value}>{value === 168 ? "7日" : `${value}時間`}</button>)}
           </div>
-          <div className="chart-legend" aria-label="プレイヤー別の色分け">
-            {players.map((player, index) => <span key={`${player.rank}-${player.name}`}><i style={{ backgroundColor: rankColors[index] }} />#{player.rank} {player.name}</span>)}
+          <div className="chart-legend" aria-label="順位別の色分け">
+            {players.map((player, index) => <span key={player.rank}><i style={{ backgroundColor: rankColors[index] }} />#{player.rank} {player.name}</span>)}
           </div>
         </div>
       </div>
@@ -221,7 +217,7 @@ function ScoreTrendChart({ history, entries, hours, onHoursChange }: { history: 
           ref={canvasRef}
           role="img"
           tabIndex={0}
-          aria-label={`トップ${players.length || 7}プレイヤーの直近${hours === 168 ? "7日間" : `${hours}時間`}の総ポイント推移。グラフにポインターを重ねると各時点の得点を確認できます`}
+          aria-label={`上位${players.length || 7}順位の直近${hours === 168 ? "7日間" : `${hours}時間`}の総ポイント推移。グラフにポインターを重ねると各時点の得点を確認できます`}
           onPointerMove={selectHoverPoint}
           onPointerLeave={() => setHoverPoint(null)}
         />
@@ -229,8 +225,9 @@ function ScoreTrendChart({ history, entries, hours, onHoursChange }: { history: 
           <div className={`chart-tooltip ${hoverPoint.alignRight ? "align-right" : ""}`} style={{ left: hoverPoint.x }} role="status" aria-live="polite">
             <time>{new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(hoverCapture.capturedAt))}</time>
             {players.map((player, index) => {
-              const score = hoverCapture.entries.find((entry) => entry.name === player.name)?.score;
-              return <div key={player.name}><i style={{ backgroundColor: rankColors[index] }} /><span>{player.name}</span><strong>{score == null ? "—" : nf.format(score)} Pt</strong></div>;
+              const historicalEntry = hoverCapture.entries.find((entry) => entry.rank === player.rank);
+              const score = scoreAtRank(hoverCapture, player.rank);
+              return <div key={player.rank}><i style={{ backgroundColor: rankColors[index] }} /><span>#{player.rank} {historicalEntry?.name ?? "—"}</span><strong>{score == null ? "—" : nf.format(score)} Pt</strong></div>;
             })}
           </div>
         )}
@@ -246,7 +243,7 @@ export default function Home() {
   const [action, setAction] = useState<string | null>(null);
   const [trendHistory, setTrendHistory] = useState<Capture[]>([]);
   const [trendHours, setTrendHours] = useState(24);
-  const [fittedPaces, setFittedPaces] = useState<Record<string, FittedPace>>({});
+  const [fittedPaces, setFittedPaces] = useState<Record<number, FittedPace>>({});
   const [now, setNow] = useState(() => Date.now());
 
   const refresh = useCallback(async () => {
@@ -272,7 +269,7 @@ export default function Home() {
       const response = await fetch(`${apiBase()}/api/pace`, { cache: "no-store" });
       if (!response.ok) throw new Error("pace unavailable");
       const payload = await response.json() as { players: FittedPace[] };
-      setFittedPaces(Object.fromEntries(payload.players.map((player) => [player.name, player])));
+      setFittedPaces(Object.fromEntries(payload.players.map((player) => [player.rank, player])));
     } catch { /* Fall back to the latest positive movement until DB pace is available. */ }
   }, []);
 
@@ -359,17 +356,17 @@ export default function Home() {
                 {entries.map((entry) => {
                   const movement = latestPositiveMovement(state?.history ?? [], entry);
                   const delta = movement?.delta ?? null;
-                  const fittedPace = fittedPaces[entry.name];
+                  const fittedPace = fittedPaces[entry.rank];
                   const rate = fittedPace?.rate ?? movement?.rate ?? null;
                   const changeAge = movement && current ? scoreChangeAgeMinutes(current.capturedAt, movement.capturedAt) : null;
                   const changeFreshness = changeAge == null ? "unknown" : scoreChangeFreshness(changeAge);
                   const pursuer = entries.find((candidate) => candidate.rank === entry.rank + 1);
                   const pursuerMovement = pursuer ? latestPositiveMovement(state?.history ?? [], pursuer) : null;
-                  const pursuerRate = pursuer ? fittedPaces[pursuer.name]?.rate ?? pursuerMovement?.rate ?? null : null;
+                  const pursuerRate = pursuer ? fittedPaces[pursuer.rank]?.rate ?? pursuerMovement?.rate ?? null : null;
                   const gap = pursuer ? Math.max(0, entry.score - pursuer.score) : null;
                   const catchEta = catchUpLabel(gap == null ? null : catchUpMinutes(gap, rate, pursuerRate));
                   return (
-                    <tr className={`rank-row rank-${entry.rank}`} key={`${entry.rank}-${entry.name}`}>
+                    <tr className={`rank-row rank-${entry.rank}`} key={entry.rank}>
                       <th scope="row">
                         <span className="rank-identity">
                           <span className="rank-badge">{entry.rank}</span>
@@ -396,7 +393,7 @@ export default function Home() {
             <div className="panel-head"><div><p className="section-kicker">スナップショット</p><h2>取得履歴</h2></div><span>{state?.history.length ?? 0}件</span></div>
             <div className="history-table" role="table" aria-label="最近の取得履歴" style={{ "--history-ranks": displayLimit } as React.CSSProperties}>
               <div className="history-row history-header" role="row"><span>時刻</span>{displayRanks.map((rank) => <span key={rank}>{rank}位</span>)}</div>
-              {recentCaptures.map((capture) => <div className="history-row" role="row" key={capture.id}><span>{timeLabel(capture.capturedAt)}</span>{displayRanks.map((rank) => <strong key={rank}>{nf.format(scoreAt(capture, rank) ?? 0)}</strong>)}</div>)}
+              {recentCaptures.map((capture) => <div className="history-row" role="row" key={capture.id}><span>{timeLabel(capture.capturedAt)}</span>{displayRanks.map((rank) => <strong key={rank}>{nf.format(scoreAtRank(capture, rank) ?? 0)}</strong>)}</div>)}
               {recentCaptures.length === 0 && <p className="empty-copy">まだ履歴がありません。</p>}
             </div>
           </article>
