@@ -52,6 +52,11 @@ button, select, input { font: inherit; }
 .ranking-table thead th:nth-child(4) { width: 12%; }
 .ranking-table thead th:nth-child(5) { width: 10.5%; }
 .ranking-table thead th:nth-child(6) { width: 19.5%; }
+/* The coin board omits pace columns, so its four visible columns must fill the table. */
+.ranking-table[data-board="poker_coin"] thead th:nth-child(1) { width: 38%; }
+.ranking-table[data-board="poker_coin"] thead th:nth-child(2) { width: 30%; }
+.ranking-table[data-board="poker_coin"] thead th:nth-child(3) { width: 16%; }
+.ranking-table[data-board="poker_coin"] thead th:nth-child(4) { width: 16%; }
 .ranking-table tbody tr { --accent: var(--blue); position: relative; border-bottom: 1px solid var(--line); }
 .ranking-table tbody tr:last-child { border-bottom: 0; }
 .ranking-table tbody tr::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--accent); }

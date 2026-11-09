@@ -149,7 +149,7 @@ This project is available under the [MIT License](LICENSE).
 
 ### Leaderboard tabs and updates
 
-The Ranking, Today Pt and Poker Coin tabs select independent histories. Pt curves, deltas and fitted pace follow rank, not nickname. Poker Coin shows the ranking, coin count, change since the preceding capture at the same rank, and gap; it does not calculate scoring speed or catch-up estimates. The daily tab displays the game-provided event day number, and its chart covers that day's data.
+The Ranking, Today Pt and Poker Coin tabs select independent histories. Pt curves, deltas and fitted pace follow rank, not nickname. Poker Coin shows the ranking, coin count, most recent positive change at the same rank and the minutes since that change (retained across unchanged polls), and gap; it does not calculate scoring speed or catch-up estimates. The daily tab displays the game-provided event day number, and its chart covers that day's data.
 
 The existing read-only APIs accept `board=total_pt|daily_pt|poker_coin`; omitted board parameters retain total Pt behavior. Unknown boards are rejected. `/api/pace?board=poker_coin` returns no pace rows. New boards use the same public read-only gateway routes; local capture and settings controls remain private.
 

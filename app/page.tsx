@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { catchUpLabel, catchUpMinutes, latestPositiveMovement, previousCaptureChange, scoreChangeAgeMinutes, scoreChangeFreshness, scoreAtRank } from "@/lib/pace";
+import { catchUpLabel, catchUpMinutes, latestPositiveMovement, scoreChangeAgeMinutes, scoreChangeFreshness, scoreAtRank } from "@/lib/pace";
 
 function apiBase() {
   if (typeof window === "undefined") return "";
@@ -366,14 +366,14 @@ export default function Home() {
         <section className="ranking-section" id="ranking">
           <div className="section-heading"><div><p className="section-kicker">トップ{displayLimit}・リアルタイム</p><h2>{boardLabels[selectedBoard]}ランキング{selectedBoard === "daily_pt" && boardState ? ` · ${boardState.dayNumber}日目` : ""}</h2></div><p>最終取得 · {timeLabel(boardUpdated)}</p></div>
           <div className="ranking-table-wrap">
-            <table className="ranking-table">
+            <table className="ranking-table" data-board={selectedBoard}>
               <thead>
                 <tr><th>順位 / プレイヤー</th><th>{showPace ? "ポイント" : "Poker Coin"}</th><th>今回の増加</th>{showPace && <th>1時間ペース</th>}<th>下位との差</th>{showPace && <th>追いつかれるまで</th>}</tr>
               </thead>
               <tbody>
                 {entries.map((entry) => {
-                  const movement = showPace ? latestPositiveMovement(boardHistory, entry) : null;
-                  const delta = showPace ? movement?.delta ?? null : previousCaptureChange(boardHistory, entry.rank);
+                  const movement = latestPositiveMovement(boardHistory, entry);
+                  const delta = movement?.delta ?? null;
                   const fittedPace = fittedPaces[entry.rank];
                   const rate = fittedPace?.rate ?? movement?.rate ?? null;
                   const changeAge = movement && current ? scoreChangeAgeMinutes(current.capturedAt, movement.capturedAt) : null;
@@ -392,7 +392,7 @@ export default function Home() {
                         </span>
                       </th>
                       <td className="total-cell"><strong>{nf.format(entry.score)}</strong></td>
-                      <td className={`change-cell freshness-${showPace ? changeFreshness : "now"}`}><strong>{delta == null ? "—" : `${delta > 0 ? "+" : ""}${nf.format(delta)}`}</strong><small>{showPace ? changeAge == null ? "更新待ち" : `${changeAge}分前` : "前回取得との差"}</small></td>
+                      <td className={`change-cell freshness-${changeFreshness}`}><strong>{delta == null ? "—" : `${delta > 0 ? "+" : ""}${nf.format(delta)}`}</strong><small>{changeAge == null ? "更新待ち" : `${changeAge}分前`}</small></td>
                       {showPace && <td><strong>{rate == null ? "—" : compactNumber(rate)}</strong></td>}
                       <td><strong>{gap == null ? "----" : nf.format(gap)}</strong></td>
                       {showPace && <td><strong>{catchEta}</strong></td>}

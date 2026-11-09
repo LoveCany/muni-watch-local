@@ -85,7 +85,7 @@ test("ships the collector and one-command local launcher", async () => {
   assert.match(collector, /\/api\/history/);
   assert.match(page, /公開ページ・閲覧専用/);
   assert.match(page, /latestPositiveMovement/);
-  assert.match(page, /<table className="ranking-table">/);
+  assert.match(page, /<table className="ranking-table"(?:\s[^>]*)?>/);
   assert.match(page, /ScoreTrendChart/);
   assert.match(page, /onPointerMove/);
   assert.match(page, /chart-tooltip/);

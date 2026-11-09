@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { latestPositiveMovement, previousCaptureChange, scoreAtRank } from "../lib/pace.ts";
+import { latestPositiveMovement, scoreAtRank, scoreChangeAgeMinutes, scoreChangeFreshness } from "../lib/pace.ts";
 
 test("rank series and movement continue across renames and changes in occupant", () => {
   const history = [
@@ -22,14 +22,16 @@ test("rank series and movement continue across renames and changes in occupant",
   });
 });
 
-test("per-capture change compares the same rank only against the preceding poll", () => {
-  const capture = (score: number, name: string) => ({ capturedAt: "2026-08-01T00:00:00Z", entries: [{ rank: 1, name, score }] });
-  const history = [capture(100, "first"), capture(140, "renamed")];
-  assert.equal(previousCaptureChange(history, 1), 40);
-  history.push(capture(140, "renamed"));
-  assert.equal(previousCaptureChange(history, 1), 0);
-  history.push(capture(130, "replacement"));
-  assert.equal(previousCaptureChange(history, 1), -10);
-  assert.equal(previousCaptureChange(history.slice(0, 1), 1), null);
-  assert.equal(previousCaptureChange(history, 2), null);
+test("unchanged polls retain the last increase and age its timestamp", () => {
+  const capture = (minute: string, score: number) => ({
+    capturedAt: `2026-08-01T00:${minute}:00Z`, entries: [{ rank: 1, name: "Synthetic player", score }],
+  });
+  const history = [capture("00", 100), capture("01", 140), capture("02", 140), capture("07", 140)];
+  const movement = latestPositiveMovement(history, history.at(-1)!.entries[0]);
+  assert.equal(movement?.delta, 40);
+  assert.equal(movement?.capturedAt, history[1].capturedAt);
+  const age = scoreChangeAgeMinutes(history.at(-1)!.capturedAt, movement!.capturedAt);
+  assert.equal(age, 6);
+  assert.equal(scoreChangeFreshness(age), "stale");
+  assert.equal(latestPositiveMovement([history[0]], history[0].entries[0]), null);
 });
