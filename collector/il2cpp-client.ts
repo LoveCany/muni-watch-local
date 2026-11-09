@@ -8,6 +8,7 @@ import { createRuntimeAgentSource } from "./runtime-profile.ts";
 import type { MuniConfig, RuntimeRankingResult } from "./types.ts";
 import { acquireRuntimeOwner } from "./runtime-owner.ts";
 import { withOperationDeadline } from "./operation-deadline.ts";
+import { identifyLeaderboard } from "./leaderboards.ts";
 import { ensureRuntimeHelper } from "./runtime-helper.ts";
 
 const execute = promisify(execFile);
@@ -18,6 +19,7 @@ export function validateRuntimeRanking(value: unknown): RuntimeRankingResult {
     throw new Error("A valid current event ID is required");
   if (typeof result.capturedAt !== "string" || !Number.isFinite(Date.parse(result.capturedAt)) ||
       !Array.isArray(result.entries) || result.entries.length !== 20) throw new Error("A complete timestamped TOP20 is required");
+  const board = identifyLeaderboard(result.rankingName, result.dayNumber);
   const entries = result.entries.map((value: unknown, index: number) => {
     if (!value || typeof value !== "object") throw new Error("Invalid IL2CPP ranking row");
     const entry = value as Record<string, unknown>;
@@ -26,7 +28,7 @@ export function validateRuntimeRanking(value: unknown): RuntimeRankingResult {
     return { rank: index + 1, name: entry.name, score: entry.score };
   });
   if (entries.some((entry, index) => index > 0 && entry.score > entries[index - 1].score)) throw new Error("IL2CPP scores are not descending");
-  return { capturedAt: result.capturedAt, entries, eventId: result.eventId };
+  return { capturedAt: result.capturedAt, entries, eventId: result.eventId, ...board };
 }
 export function parseRuntimeCapture(value: unknown):
   { status: "ok"; result: RuntimeRankingResult } | { status: "failed"; pending: boolean; error: string } {

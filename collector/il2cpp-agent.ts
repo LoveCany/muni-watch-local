@@ -347,7 +347,12 @@ function readRanking() {
         if(cell.isNull() || !objectClass(cell).equals(klass('','EventRankingInfoCarouselCellData')))
             throw new Error('Missing current ranking identity');
         const rankingName=managedString(cell.add(layout.fields.rankingCellName).readPointer());
-        if(rankingName!=='累計Ptランキング') throw new Error('The active board is not the cumulative Pt leaderboard');
+        if(!['累計Ptランキング','デイリーPtランキング','POKER COINランキング'].includes(rankingName))
+            throw new Error('Unsupported active event leaderboard');
+        const dayNumber=rankingName==='デイリーPtランキング'
+            ? invoke(objectClass(cell),'get_DayNumber',cell).add(layout.boxedValue).readS32() : 0;
+        if(rankingName==='デイリーPtランキング' && (dayNumber<1 || dayNumber>366))
+            throw new Error('Invalid daily ranking period');
         if(master.isNull() || !objectClass(master).equals(klass('','EventMaster')))
             throw new Error('Unexpected current event master');
         const eventId=master.add(layout.fields.eventMasterId).readS32();
@@ -358,9 +363,12 @@ function readRanking() {
             (i>0 && entry.score>second[i-1].score))) throw new Error('Invalid TOP20 ranks or scores');
         if(!active(live[0]) || !fieldValue(manager,'_dataList').equals(array))
             throw new Error('The active leaderboard changed during capture');
+        if(!presenter.add(layout.fields.rankingPresenterCurrentCell).readPointer().equals(cell) ||
+            (rankingName==='デイリーPtランキング' && invoke(objectClass(cell),'get_DayNumber',cell).add(layout.boxedValue).readS32()!==dayNumber))
+            throw new Error('The leaderboard period changed during capture');
         if(!active(presenter) || !presenter.add(layout.fields.rankingPresenterMaster).readPointer().equals(master))
             throw new Error('The current event changed during capture');
-        return {capturedAt:new Date().toISOString(),entries:second,eventId,rankingName};
+        return {capturedAt:new Date().toISOString(),entries:second,eventId,rankingName,dayNumber};
     } finally {
         if(!releaseTemporary()) throw new Error('Main-thread cleanup remains pending');
         send({stage:'capture_detach_worker'});

@@ -61,3 +61,9 @@ export function latestPositiveMovement(history: PaceCapture[], entry: PaceEntry)
 export function scoreAtRank(capture: PaceCapture | undefined, rank: number) {
   return capture?.entries.find(entry => entry.rank === rank)?.score ?? null;
 }
+
+export function previousCaptureChange(history: PaceCapture[], rank: number) {
+  const current = scoreAtRank(history.at(-1), rank);
+  const previous = scoreAtRank(history.at(-2), rank);
+  return current == null || previous == null ? null : current - previous;
+}

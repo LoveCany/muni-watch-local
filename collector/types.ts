@@ -31,9 +31,13 @@ export type MuniConfig = {
 
 export type RankingEntry = { rank: number; name: string; score: number; confidence?: number };
 export type Capture = { id: string; capturedAt: string; entries: RankingEntry[] };
-export type RuntimeRankingResult = { capturedAt: string; entries: RankingEntry[]; eventId: number };
+export type LeaderboardId = "total_pt" | "daily_pt" | "poker_coin";
+export type BoardState = { name: string; dayNumber: number; history: Capture[]; lastUpdated: string | null };
+export type RuntimeRankingResult = { capturedAt: string; entries: RankingEntry[]; eventId: number;
+  board: LeaderboardId; rankingName: string; dayNumber: number };
 export type CollectorState = {
   eventId?: number;
+  boards?: Partial<Record<LeaderboardId, BoardState>>;
   status: "booting" | "capturing" | "idle" | "error";
   lastUpdated: string | null;
   lastError: string | null;

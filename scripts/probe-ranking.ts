@@ -47,9 +47,9 @@ try {
     const result = await client.capture();
     await mkdir(path.join(root, "data"), { recursive: true });
     const output = path.join(root, "data/il2cpp-probe.json");
-    await writeFile(output+".tmp", JSON.stringify({ capturedAt: result.capturedAt, entries: result.entries }, null, 2)+"\n");
+    await writeFile(output+".tmp", JSON.stringify({ capturedAt: result.capturedAt, entries: result.entries, rankingName: result.rankingName, dayNumber: result.dayNumber }, null, 2)+"\n");
     await rename(output+".tmp", output);
-    console.log(JSON.stringify({ capturedAt: result.capturedAt, entries: result.entries.length, source: "il2cpp" }));
+    console.log(JSON.stringify({ capturedAt: result.capturedAt, entries: result.entries.length, source: "il2cpp", board: result.board, dayNumber: result.dayNumber }));
     if (index + 1 < count) await wait(config.intervalMinutes * 60000);
   }
 } catch (error) {

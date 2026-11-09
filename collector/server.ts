@@ -5,6 +5,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { isRankingImage, isTop20Image, refreshTop20 } from "./ranking-refresh.ts";
+import { captureBoards } from "./board-capture.ts";
+import { parseLeaderboard } from "./leaderboards.ts";
 import { createHistoryDatabase } from "./history-db.ts";
 import { createEventHistoryStore } from "./event-history.ts";
 import { parseMuniConfig, serializeMuniConfig } from "./config.ts";
@@ -13,7 +15,7 @@ import { createPpOcrClient } from "./ppocr-client.ts";
 import { createIl2CppClient } from "./il2cpp-client.ts";
 import { assertScoreContinuity, selectLeaderboardScores } from "./score-validation.ts";
 import { createServiceDiagnostics, recordProcessLifecycle, runBackgroundCapture } from "./service-diagnostics.ts";
-import type { Capture, CollectorState, MuniConfig, OcrRow, RankingEntry } from "./types.ts";
+import type { Capture, CollectorState, MuniConfig, OcrRow, RankingEntry, RuntimeRankingResult, LeaderboardId } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -62,7 +64,11 @@ const eventHistory = createEventHistoryStore(path.join(ROOT, "data", "events"));
 const legacyHistory = config.captureMode === "il2cpp" ? null : createHistoryDatabase(HISTORY_DB_FILE);
 legacyHistory?.backfill(state.history);
 if (config.captureMode === "il2cpp" && state.eventId) eventHistory.select(state.eventId);
-function currentHistory() { return legacyHistory ?? eventHistory.current; }
+function currentHistory(board: LeaderboardId = "total_pt") {
+  if (board === "total_pt") return legacyHistory ?? eventHistory.current;
+  const saved = state.boards?.[board];
+  return saved && state.eventId ? eventHistory.select(state.eventId, board, saved.dayNumber).database : null;
+}
 const ocrClient = createPpOcrClient({ root: ROOT, config: config.ocr });
 const runtimeClient = createIl2CppClient(ROOT, config);
 let capturePromise: Promise<ReturnType<typeof publicState>> | null = null;
@@ -128,18 +134,46 @@ async function readEntries() {
   return entries;
 }
 
-async function readRanking() {
-  if (config.captureMode !== "il2cpp") return { entries: await readEntries(), capturedAt: new Date().toISOString() };
-  const result = await runtimeClient.capture();
-  const { database, changed } = eventHistory.select(result.eventId);
-  if (changed) {
-    state.history = database.query({ hours: 48, maxPoints: 288 });
-    state.lastUpdated = state.history.at(-1)?.capturedAt ?? null;
+async function saveBoard(result: RuntimeRankingResult) {
+  if (state.eventId !== result.eventId) {
+    state.boards = {};
+    state.history = [];
+    state.lastUpdated = null;
   }
+  const { database } = eventHistory.select(result.eventId, result.board, result.dayNumber);
   state.eventId = result.eventId;
-  assertScoreContinuity(result.entries, state.history.slice(-288));
+  state.boards ??= {};
+  let board = state.boards[result.board];
+  if (!board || board.dayNumber !== result.dayNumber) {
+    const history = database.query({ hours: 48, maxPoints: 288 });
+    board = { name: result.rankingName, dayNumber: result.dayNumber, history, lastUpdated: history.at(-1)?.capturedAt ?? null };
+  }
+  if (result.board !== "poker_coin") assertScoreContinuity(result.entries, board.history);
+  const capture: Capture = { id: String(Date.now()), capturedAt: result.capturedAt, entries: result.entries };
+  database.insert(capture);
+  board.history = [...board.history, capture].slice(-288);
+  board.lastUpdated = result.capturedAt;
+  state.boards[result.board] = board;
+  if (result.board === "total_pt") {
+    state.history = board.history;
+    state.lastUpdated = board.lastUpdated;
+  }
   state.ocr = { engine: "IL2CPP", model: "EventRankingData", device: "MuMu", gpu: "unused" };
-  return result;
+  await persist();
+}
+
+async function nextBoard() {
+  if (config.screen.width !== 1920 || config.screen.height !== 1080)
+    throw new Error("Multi-board collection requires the verified 1920 x 1080 layout");
+  await adb(["-s", config.serial, "shell", "input", "tap", "1850", "650"]);
+  await sleep(1000);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await adb(["-s", config.serial, "shell", "input", "tap", String(config.taps.top20.x), String(config.taps.top20.y)]);
+    await sleep(Math.max(500, config.waitAfterTop20Ms));
+    await takeScreenshot();
+    if (await isTop20Image(SCREENSHOT_FILE, config.screen)) return;
+  }
+  throw new Error("Next leaderboard TOP20 did not load in time");
 }
 
 function publicState() {
@@ -165,14 +199,18 @@ async function runCapture() {
     try {
       await connectMuMu();
       await ensureTop20();
-      const { entries, capturedAt } = await readRanking();
-      const capture: Capture = { id: `${Date.now()}`, capturedAt, entries };
-      const database = currentHistory();
-      if (!database) throw new Error("Current event history is not initialized");
-      database.insert(capture);
-      state.history.push(capture);
-      state.history = state.history.slice(-288);
-      state.lastUpdated = capturedAt;
+      if (config.captureMode === "il2cpp") {
+        await captureBoards({ capture: () => runtimeClient.capture(), next: nextBoard, save: saveBoard });
+      } else {
+        const entries = await readEntries();
+        const capturedAt = new Date().toISOString();
+        const capture: Capture = { id: String(Date.now()), capturedAt, entries };
+        const database = currentHistory();
+        if (!database) throw new Error("Current event history is not initialized");
+        database.insert(capture);
+        state.history = [...state.history, capture].slice(-288);
+        state.lastUpdated = capturedAt;
+      }
       state.status = "idle";
       state.mumu.screen = "TOP20";
     } catch (error) {
@@ -225,11 +263,13 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/api/state") { sendJson(response, 200, publicState()); return; }
     if (request.method === "GET" && requestUrl.pathname === "/api/history") {
       const hours = Math.min(168, Math.max(1, Number(requestUrl.searchParams.get("hours")) || 24));
+      const board = parseLeaderboard(requestUrl.searchParams.get("board"));
       const maxPoints = Math.min(480, Math.max(40, Number(requestUrl.searchParams.get("maxPoints")) || 240));
-      sendJson(response, 200, { history: currentHistory()?.query({ hours, maxPoints }) ?? [], hours }); return;
+      sendJson(response, 200, { history: currentHistory(board)?.query({ hours, maxPoints }) ?? [], hours }); return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/api/pace") {
-      sendJson(response, 200, { hours: 1, players: currentHistory()?.fitPaces({ hours: 1 }) ?? [] }); return;
+      const board = parseLeaderboard(requestUrl.searchParams.get("board"));
+      sendJson(response, 200, { hours: 1, players: board === "poker_coin" ? [] : currentHistory(board)?.fitPaces({ hours: 1 }) ?? [] }); return;
     }
     if (request.method === "POST" && request.url === "/api/capture") { sendJson(response, 200, await runCapture()); return; }
     if (request.method === "POST" && request.url === "/api/shutdown") {

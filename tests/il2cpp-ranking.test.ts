@@ -5,7 +5,7 @@ import { parseMuniConfig, serializeMuniConfig } from "../collector/config.ts";
 import { readFile } from "node:fs/promises";
 
 function snapshot() {
-  return { eventId: 123, capturedAt: "2026-01-01T00:00:00.000Z", entries: Array.from({ length: 20 }, (_, i) =>
+  return { board: "total_pt" as const, rankingName: "累計Ptランキング", dayNumber: 0, eventId: 123, capturedAt: "2026-01-01T00:00:00.000Z", entries: Array.from({ length: 20 }, (_, i) =>
     ({ rank: i + 1, name: `Synthetic player ${i + 1}`, score: 1000000 - i * 100 })) };
 }
 

@@ -62,3 +62,21 @@ test("named board tables in one event database never overwrite each other", asyn
     assert.throws(() => createHistoryDatabase(file, { tablePrefix: "unsafe;" }), /prefix/);
   } finally { other?.close(); total?.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test("daily rollover and additional boards keep separate history and continuity", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "muni-days-"));
+  const store = createEventHistoryStore(dir);
+  try {
+    store.select(101).database.insert(capture(1000));
+    store.select(101, "daily_pt", 1).database.insert(capture(500));
+    const day2 = store.select(101, "daily_pt", 2).database;
+    assert.deepEqual(day2.query(), []);
+    assert.doesNotThrow(() => assertScoreContinuity(capture(100).entries, day2.query()));
+    day2.insert(capture(100));
+    store.select(101, "poker_coin").database.insert(capture(700));
+    assert.equal(store.select(101, "daily_pt", 1).database.query()[0].entries[0].score, 500);
+    assert.equal(store.select(101).database.query()[0].entries[0].score, 1000);
+    assert.equal(store.select(101, "poker_coin").database.query()[0].entries[0].score, 700);
+    assert.throws(() => store.select(101, "daily_pt", 0), /identity/);
+  } finally { store.close(); await rm(dir, { recursive: true, force: true }); }
+});

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { catchUpLabel, catchUpMinutes, latestPositiveMovement, scoreChangeAgeMinutes, scoreChangeFreshness, scoreAtRank } from "@/lib/pace";
+import { catchUpLabel, catchUpMinutes, latestPositiveMovement, previousCaptureChange, scoreChangeAgeMinutes, scoreChangeFreshness, scoreAtRank } from "@/lib/pace";
 
 function apiBase() {
   if (typeof window === "undefined") return "";
@@ -9,6 +9,9 @@ function apiBase() {
     ? "http://127.0.0.1:4317"
     : "";
 }
+
+type BoardId = "total_pt" | "daily_pt" | "poker_coin";
+const boardLabels: Record<BoardId, string> = { total_pt: "累計Pt", daily_pt: "今日Pt", poker_coin: "Poker Coin" };
 
 type Entry = { rank: number; name: string; score: number; confidence?: number };
 type Capture = { id: string; capturedAt: string; entries: Entry[] };
@@ -18,6 +21,7 @@ type MonitorState = {
   lastUpdated: string | null;
   lastError: string | null;
   history: Capture[];
+  boards?: Partial<Record<BoardId, { name: string; dayNumber: number; history: Capture[]; lastUpdated: string | null }>>;
   config: { intervalMinutes: number; auto: boolean; eventName: string; leaderboard: string; maxEntries: number };
   mumu: { name: string; connected: boolean; screen: string };
   ocr: { engine: string; model: string; device: string; gpu: string } | null;
@@ -237,6 +241,10 @@ function ScoreTrendChart({ history, entries, hours, onHoursChange }: { history: 
 }
 
 export default function Home() {
+  const [selectedBoard, setSelectedBoard] = useState<BoardId>("total_pt");
+  const boardRef = useRef<BoardId>("total_pt");
+  const trendRequest = useRef(0);
+  const paceRequest = useRef(0);
   const [state, setState] = useState<MonitorState | null>(null);
   const [connected, setConnected] = useState(false);
   const [canControl, setCanControl] = useState(false);
@@ -245,6 +253,11 @@ export default function Home() {
   const [trendHours, setTrendHours] = useState(24);
   const [fittedPaces, setFittedPaces] = useState<Record<number, FittedPace>>({});
   const [now, setNow] = useState(() => Date.now());
+
+  const boardState = state?.boards?.[selectedBoard];
+  const boardHistory = boardState?.history ?? (selectedBoard === "total_pt" ? state?.history ?? [] : []);
+  const boardUpdated = boardState?.lastUpdated ?? (selectedBoard === "total_pt" ? state?.lastUpdated : null);
+  const showPace = selectedBoard !== "poker_coin";
 
   const refresh = useCallback(async () => {
     try {
@@ -256,22 +269,25 @@ export default function Home() {
   }, []);
 
   const refreshTrend = useCallback(async () => {
+    const request = ++trendRequest.current;
     try {
-      const response = await fetch(`${apiBase()}/api/history?hours=${trendHours}&maxPoints=240`, { cache: "no-store" });
+      const response = await fetch(`${apiBase()}/api/history?hours=${trendHours}&board=${selectedBoard}&maxPoints=240`, { cache: "no-store" });
       if (!response.ok) throw new Error("history unavailable");
       const payload = await response.json() as { history: Capture[] };
-      setTrendHistory(payload.history);
+      if (boardRef.current === selectedBoard && request === trendRequest.current) setTrendHistory(payload.history);
     } catch { /* The live JSON history remains available as a fallback. */ }
-  }, [trendHours]);
+  }, [trendHours, selectedBoard]);
 
   const refreshPaces = useCallback(async () => {
+    const request = ++paceRequest.current;
+    if (selectedBoard === "poker_coin") return;
     try {
-      const response = await fetch(`${apiBase()}/api/pace`, { cache: "no-store" });
+      const response = await fetch(`${apiBase()}/api/pace?board=${selectedBoard}`, { cache: "no-store" });
       if (!response.ok) throw new Error("pace unavailable");
       const payload = await response.json() as { players: FittedPace[] };
-      setFittedPaces(Object.fromEntries(payload.players.map((player) => [player.rank, player])));
+      if (boardRef.current === selectedBoard && request === paceRequest.current) setFittedPaces(Object.fromEntries(payload.players.map((player) => [player.rank, player])));
     } catch { /* Fall back to the latest positive movement until DB pace is available. */ }
-  }, []);
+  }, [selectedBoard]);
 
   useEffect(() => {
     queueMicrotask(() => setCanControl(["localhost", "127.0.0.1"].includes(window.location.hostname)));
@@ -281,8 +297,8 @@ export default function Home() {
     return () => { window.clearInterval(poll); window.clearInterval(clock); };
   }, [refresh]);
 
-  useEffect(() => { queueMicrotask(() => void refreshTrend()); }, [refreshTrend, state?.lastUpdated]);
-  useEffect(() => { queueMicrotask(() => void refreshPaces()); }, [refreshPaces, state?.lastUpdated]);
+  useEffect(() => { queueMicrotask(() => void refreshTrend()); }, [refreshTrend, boardUpdated]);
+  useEffect(() => { queueMicrotask(() => void refreshPaces()); }, [refreshPaces, boardUpdated]);
 
   const captureNow = async () => {
     if (!canControl) return;
@@ -310,11 +326,11 @@ export default function Home() {
     } catch { refresh(); }
   };
 
-  const current = state?.history.at(-1);
+  const current = boardHistory.at(-1);
   const displayLimit = state?.config.maxEntries ?? 20;
   const displayRanks = useMemo(() => Array.from({ length: displayLimit }, (_, index) => index + 1), [displayLimit]);
   const entries = (current?.entries ?? []).slice(0, displayLimit);
-  const recentCaptures = state?.history.slice(-6).reverse() ?? [];
+  const recentCaptures = boardHistory.slice(-6).reverse();
   const nextCapture = (() => {
     if (!state?.lastUpdated || !state.config.auto) return null;
     const target = new Date(state.lastUpdated).getTime() + state.config.intervalMinutes * 60_000;
@@ -336,32 +352,34 @@ export default function Home() {
             <p className="hero-subtitle">MuMu の「ランキング → TOP20」を定期取得。上位{displayLimit}名の変化を、静かに追いかけます。</p>
           </div>
           <div className="hero-meta">
-            <div><span>ランキング</span><strong>{state?.config.leaderboard ?? "累計Pt · TOP20"}</strong></div>
-            <div><span>最終更新</span><strong>{elapsedLabel(state?.lastUpdated)}</strong></div>
+            <div><span>ランキング</span><strong>{boardLabels[selectedBoard]} · TOP20</strong></div>
+            <div><span>最終更新</span><strong>{elapsedLabel(boardUpdated)}</strong></div>
           </div>
         </section>
 
         {!connected && <section className="offline-banner"><span>!</span><div><strong>収集サービスに接続できません</strong><p>プロジェクトフォルダーで「npm run local」を実行すると、このページは自動的に再接続します。</p></div></section>}
 
-        <nav className="section-tabs" aria-label="ページ内メニュー"><a className="active" href="#ranking">ランキング</a>{canControl && <><a href="#history">取得履歴</a><a href="#collector">収集設定</a></>}</nav>
+        <nav className="section-tabs" aria-label="ページ内メニュー">{(["total_pt", "daily_pt", "poker_coin"] as BoardId[]).map(board => <button type="button" key={board} className={selectedBoard === board ? "active" : ""} aria-pressed={selectedBoard === board} onClick={() => {
+          boardRef.current = board; setSelectedBoard(board); setTrendHistory([]); setFittedPaces({});
+        }}>{board === "total_pt" ? "ランキング" : boardLabels[board]}</button>)}{canControl && <><a href="#history">取得履歴</a><a href="#collector">収集設定</a></>}</nav>
 
         <section className="ranking-section" id="ranking">
-          <div className="section-heading"><div><p className="section-kicker">トップ{displayLimit}・リアルタイム</p><h2>ランキング</h2></div><p>最終取得 · {timeLabel(state?.lastUpdated)}</p></div>
+          <div className="section-heading"><div><p className="section-kicker">トップ{displayLimit}・リアルタイム</p><h2>{boardLabels[selectedBoard]}ランキング{selectedBoard === "daily_pt" && boardState ? ` · ${boardState.dayNumber}日目` : ""}</h2></div><p>最終取得 · {timeLabel(boardUpdated)}</p></div>
           <div className="ranking-table-wrap">
             <table className="ranking-table">
               <thead>
-                <tr><th>順位 / プレイヤー</th><th>累計ポイント</th><th>今回の増加</th><th>1時間ペース</th><th>下位との差</th><th>追いつかれるまで</th></tr>
+                <tr><th>順位 / プレイヤー</th><th>{showPace ? "ポイント" : "Poker Coin"}</th><th>今回の増加</th>{showPace && <th>1時間ペース</th>}<th>下位との差</th>{showPace && <th>追いつかれるまで</th>}</tr>
               </thead>
               <tbody>
                 {entries.map((entry) => {
-                  const movement = latestPositiveMovement(state?.history ?? [], entry);
-                  const delta = movement?.delta ?? null;
+                  const movement = showPace ? latestPositiveMovement(boardHistory, entry) : null;
+                  const delta = showPace ? movement?.delta ?? null : previousCaptureChange(boardHistory, entry.rank);
                   const fittedPace = fittedPaces[entry.rank];
                   const rate = fittedPace?.rate ?? movement?.rate ?? null;
                   const changeAge = movement && current ? scoreChangeAgeMinutes(current.capturedAt, movement.capturedAt) : null;
                   const changeFreshness = changeAge == null ? "unknown" : scoreChangeFreshness(changeAge);
                   const pursuer = entries.find((candidate) => candidate.rank === entry.rank + 1);
-                  const pursuerMovement = pursuer ? latestPositiveMovement(state?.history ?? [], pursuer) : null;
+                  const pursuerMovement = showPace && pursuer ? latestPositiveMovement(boardHistory, pursuer) : null;
                   const pursuerRate = pursuer ? fittedPaces[pursuer.rank]?.rate ?? pursuerMovement?.rate ?? null : null;
                   const gap = pursuer ? Math.max(0, entry.score - pursuer.score) : null;
                   const catchEta = catchUpLabel(gap == null ? null : catchUpMinutes(gap, rate, pursuerRate));
@@ -374,23 +392,23 @@ export default function Home() {
                         </span>
                       </th>
                       <td className="total-cell"><strong>{nf.format(entry.score)}</strong></td>
-                      <td className={`change-cell freshness-${changeFreshness}`}><strong>{delta == null ? "—" : `+${nf.format(delta)}`}</strong><small>{changeAge == null ? "更新待ち" : `${changeAge}分前`}</small></td>
-                      <td><strong>{rate == null ? "—" : compactNumber(rate)}</strong></td>
+                      <td className={`change-cell freshness-${showPace ? changeFreshness : "now"}`}><strong>{delta == null ? "—" : `${delta > 0 ? "+" : ""}${nf.format(delta)}`}</strong><small>{showPace ? changeAge == null ? "更新待ち" : `${changeAge}分前` : "前回取得との差"}</small></td>
+                      {showPace && <td><strong>{rate == null ? "—" : compactNumber(rate)}</strong></td>}
                       <td><strong>{gap == null ? "----" : nf.format(gap)}</strong></td>
-                      <td><strong>{catchEta}</strong></td>
+                      {showPace && <td><strong>{catchEta}</strong></td>}
                     </tr>
                   );
                 })}
-                {entries.length === 0 && <tr className="ranking-empty"><td colSpan={6}>取得後、トップ{displayLimit}のプレイヤー名とスコアがここに表示されます</td></tr>}
+                {entries.length === 0 && <tr className="ranking-empty"><td colSpan={showPace ? 6 : 4}>取得後、トップ{displayLimit}のプレイヤー名とスコアがここに表示されます</td></tr>}
               </tbody>
             </table>
           </div>
-          <ScoreTrendChart history={trendHistory.length ? trendHistory : state?.history ?? []} entries={entries} hours={trendHours} onHoursChange={setTrendHours} />
+          {showPace && <ScoreTrendChart history={trendHistory.length ? trendHistory : boardHistory} entries={entries} hours={trendHours} onHoursChange={setTrendHours} />}
         </section>
 
         {canControl && <section className="lower-grid">
           <article className="panel history-panel" id="history">
-            <div className="panel-head"><div><p className="section-kicker">スナップショット</p><h2>取得履歴</h2></div><span>{state?.history.length ?? 0}件</span></div>
+            <div className="panel-head"><div><p className="section-kicker">スナップショット</p><h2>取得履歴</h2></div><span>{boardHistory.length}件</span></div>
             <div className="history-table" role="table" aria-label="最近の取得履歴" style={{ "--history-ranks": displayLimit } as React.CSSProperties}>
               <div className="history-row history-header" role="row"><span>時刻</span>{displayRanks.map((rank) => <span key={rank}>{rank}位</span>)}</div>
               {recentCaptures.map((capture) => <div className="history-row" role="row" key={capture.id}><span>{timeLabel(capture.capturedAt)}</span>{displayRanks.map((rank) => <strong key={rank}>{nf.format(scoreAtRank(capture, rank) ?? 0)}</strong>)}</div>)}
